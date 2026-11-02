@@ -7,7 +7,7 @@ import { fmtMoney, tr } from "@/lib/i18n";
 import { getMaterialBySlug, recordMaterialView } from "@/lib/queries";
 import { PurchaseButton } from "@/components/PurchaseModal";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { Badge, Card, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
 import { MaterialThumb } from "@/components/MaterialCard";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
@@ -136,7 +136,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
                       {l.questions.length > 0 && ` · ${l.questions.length} ${t("materials.quizQuestions")}`}
                     </p>
                   </div>
-                  {material.purchased ? <span className="text-xs font-semibold text-navy-500 dark:text-sky-300">{t("materials.open")} →</span> : <Icon name="lock" className="h-4 w-4 text-slate-400" />}
+                  {material.purchased ? <span className="text-xs font-semibold text-navy-500 dark:text-sky-300">{t("materials.open")} <ForwardArrow /></span> : <Icon name="lock" className="h-4 w-4 text-slate-400" />}
                 </div>
               );
               return (

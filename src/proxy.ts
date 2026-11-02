@@ -31,6 +31,7 @@ export function proxy(request: NextRequest) {
     queryLocale ||
     request.headers.get("x-locale") ||
     request.cookies.get("locale")?.value ||
+    request.cookies.get("locale_p")?.value ||
     "";
 
   const queryTheme = request.nextUrl.searchParams.get("theme");
@@ -38,6 +39,7 @@ export function proxy(request: NextRequest) {
     queryTheme ||
     request.headers.get("x-theme") ||
     request.cookies.get("theme")?.value ||
+    request.cookies.get("theme_p")?.value ||
     "";
 
   const requestHeaders = new Headers(request.headers);
@@ -85,6 +87,17 @@ export function proxy(request: NextRequest) {
       maxAge: 60 * 60 * 24 * 365,
       sameSite: "lax",
     });
+    try {
+      response.cookies.set("locale_p", queryLocale, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 365,
+        secure: true,
+        sameSite: "none",
+        partitioned: true,
+      });
+    } catch {
+      // Partitioned cookies are not supported by every local runtime.
+    }
   }
 
   if (queryTheme === "light" || queryTheme === "dark") {
@@ -93,6 +106,17 @@ export function proxy(request: NextRequest) {
       maxAge: 60 * 60 * 24 * 365,
       sameSite: "lax",
     });
+    try {
+      response.cookies.set("theme_p", queryTheme, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 365,
+        secure: true,
+        sameSite: "none",
+        partitioned: true,
+      });
+    } catch {
+      // Partitioned cookies are not supported by every local runtime.
+    }
   }
 
   return response;

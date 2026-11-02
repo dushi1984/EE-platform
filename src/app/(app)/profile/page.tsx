@@ -7,7 +7,7 @@ import QRCode from "qrcode";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { TopBar } from "@/components/shell/TopBar";
-import { Card } from "@/components/ui";
+import { BackArrow, Card, ForwardArrow } from "@/components/ui";
 import { ContactForm, NameForm, NotificationsForm, PasswordForm, PhotoForm } from "@/components/ProfileForms";
 
 export const metadata: Metadata = { title: "Profile" };
@@ -27,17 +27,17 @@ export default async function ProfilePage() {
     <>
       <TopBar title={t("profile.title")} />
 
-      <div className="flex items-center gap-4 px-2">
+      <div className="flex flex-wrap items-center gap-4 px-2">
         <Link href="/dashboard" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
-          ← {t("dashboard.title")}
+          <BackArrow /> {t("dashboard.title")}
         </Link>
         {user.role === "student" && (
           <>
             <Link href="/grades" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
-              {t("grades.title")} →
+              {t("grades.title")} <ForwardArrow />
             </Link>
             <Link href="/materials" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
-              {t("materials.title")} →
+              {t("materials.title")} <ForwardArrow />
             </Link>
           </>
         )}

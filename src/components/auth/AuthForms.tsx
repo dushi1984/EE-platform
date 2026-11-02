@@ -64,11 +64,11 @@ export function RegisterForm({ error }: { error?: TKey }) {
     <form action="/api/auth/register" method="post" className="mt-6" onSubmit={handleRegister}>
       <div className={groupCls}>
         <input name="fullName" required autoComplete="name" placeholder={t("auth.fullName")} className={fieldCls} />
-        <input name="parentPhone" required inputMode="tel" autoComplete="tel" placeholder={t("auth.parentPhone")} className={fieldCls} />
-        <input name="contact" required autoComplete="username" placeholder={t("auth.phoneOrEmail")} className={fieldCls} />
-        <input name="code" required placeholder={t("auth.code")} className={fieldCls} dir="ltr" />
-        <input name="password" type="password" required minLength={6} autoComplete="new-password" placeholder={t("auth.password")} className={fieldCls} dir="ltr" />
-        <input name="confirmPassword" type="password" required minLength={6} autoComplete="new-password" placeholder={t("auth.confirmPassword")} className={fieldCls} dir="ltr" />
+        <input name="parentPhone" required inputMode="tel" autoComplete="tel" placeholder={t("auth.parentPhone")} className={fieldCls} dir="auto" />
+        <input name="contact" required autoComplete="username" placeholder={t("auth.phoneOrEmail")} className={fieldCls} dir="auto" />
+        <input name="code" required placeholder={t("auth.code")} className={fieldCls} dir="auto" />
+        <input name="password" type="password" required minLength={6} autoComplete="new-password" placeholder={t("auth.password")} className={fieldCls} dir="auto" />
+        <input name="confirmPassword" type="password" required minLength={6} autoComplete="new-password" placeholder={t("auth.confirmPassword")} className={fieldCls} dir="auto" />
       </div>
       <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{t("auth.codeHint")}</p>
       <div className="mt-3 flex justify-end">
@@ -155,7 +155,7 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
           defaultValue={identifier}
           placeholder={t("auth.identifier")}
           className={fieldCls}
-          dir="ltr"
+          dir="auto"
         />
         <input
           name="password"
@@ -164,7 +164,7 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
           autoComplete="current-password"
           placeholder={t("auth.password")}
           className={fieldCls}
-          dir="ltr"
+          dir="auto"
         />
       </div>
       <div className="mt-3 flex items-center justify-between">

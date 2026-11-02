@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useI18n } from "@/lib/i18n-client";
 import { tt } from "@/lib/i18n-teacher";
 import { createStudentAction, type TeacherActionState } from "@/lib/teacher-actions";
-import { Icon } from "@/components/ui";
+import { BackArrow, Icon } from "@/components/ui";
 
 const input =
   "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-950 dark:text-white";
@@ -50,7 +50,7 @@ export function StudentCreateForm({ levels, classes }: { levels: LevelOpt[]; cla
             {copied ? c.copied : c.copyCredentials}
           </button>
           <div className="mt-5">
-            <Link href="/students" className="text-sm font-bold text-blue-600 hover:underline">← {c.backToStudents}</Link>
+            <Link href="/students" className="text-sm font-bold text-blue-600 hover:underline"><BackArrow /> {c.backToStudents}</Link>
           </div>
         </div>
       </div>

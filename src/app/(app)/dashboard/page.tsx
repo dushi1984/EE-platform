@@ -6,7 +6,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
 import { getDashboardData, getRecentTaskGrades } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, EmptyState, ProgressBar, SectionTitle, SubHeading } from "@/components/ui";
+import { Badge, Card, EmptyState, ForwardArrow, ProgressBar, SectionTitle, SubHeading } from "@/components/ui";
 import { MaterialThumb } from "@/components/MaterialCard";
 import { TeacherDashboard } from "@/components/teacher/TeacherDashboard";
 
@@ -111,7 +111,7 @@ export default async function DashboardPage() {
                 className="inline-flex items-center gap-2 rounded-xl bg-navy-500 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-navy-500/20 hover:bg-navy-600 transition active:scale-95"
               >
                 <span>{locale === "ar" ? "متابعة الدرس" : "Resume Lesson"}</span>
-                <span>→</span>
+                <ForwardArrow />
               </Link>
             </div>
           </div>
@@ -123,7 +123,7 @@ export default async function DashboardPage() {
         <SectionTitle
           action={
             <Link href="/tasks" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
-              {t("common.viewAll")} →
+              {t("common.viewAll")} <ForwardArrow />
             </Link>
           }
         >
@@ -157,7 +157,7 @@ export default async function DashboardPage() {
                     <ProgressBar percent={task.progress} className="mt-3 max-w-xs" />
                   )}
                   <div className="mt-3 flex items-center gap-3 text-xs font-semibold text-navy-500 dark:text-sky-300">
-                    <span>{t("tasks.openDetails")} →</span>
+                    <span>{t("tasks.openDetails")} <ForwardArrow /></span>
                     {task.attachmentName && <span>📎 {t("tasks.attachment")}</span>}
                     {task.hasSubmission && <span className="text-green-600">✓ {t("tasks.submitted")}</span>}
                   </div>
@@ -173,7 +173,7 @@ export default async function DashboardPage() {
         <SectionTitle
           action={
             <Link href="/materials" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
-              {t("common.viewAll")} →
+              {t("common.viewAll")} <ForwardArrow />
             </Link>
           }
         >
@@ -217,7 +217,7 @@ export default async function DashboardPage() {
                           <span className="text-xs text-slate-500">{m.percent}%</span>
                         </div>
                       ) : (
-                        <p className="mt-2 text-xs font-semibold text-blue-600">{t("materials.buy")} →</p>
+                        <p className="mt-2 text-xs font-semibold text-blue-600">{t("materials.buy")} <ForwardArrow /></p>
                       )}
                     </div>
                   </Link>

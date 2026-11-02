@@ -36,16 +36,14 @@ export function buildSessionUrl(raw: string, explicitToken?: string): string {
   const token = explicitToken ?? getActiveSessionToken();
   const url = new URL(raw, window.location.origin);
   if (url.origin !== window.location.origin) return url.toString();
-  if (
-    url.pathname.startsWith("/api/") ||
-    url.pathname.startsWith("/_next/") ||
-    url.pathname === "/login" ||
-    url.pathname.startsWith("/login/") ||
-    url.pathname === "/register"
-  ) {
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/_next/")) {
     return url.toString();
   }
-  if (token) url.searchParams.set("session", token);
+  const isAuthPage =
+    url.pathname === "/login" ||
+    url.pathname.startsWith("/login/") ||
+    url.pathname === "/register";
+  if (token && !isAuthPage) url.searchParams.set("session", token);
   try {
     const currentParams = new URLSearchParams(window.location.search);
     const locale = localStorage.getItem("locale") || currentParams.get("lang");
@@ -111,7 +109,16 @@ function SignOutButton({ label, collapsed }: { label: string; collapsed: boolean
       // The local session is still cleared below if the network is interrupted.
     }
     clearClientSession();
-    window.location.replace("/login?logged_out=1");
+    let loginUrl = "/login?logged_out=1";
+    try {
+      const savedLocale = localStorage.getItem("locale");
+      if (savedLocale === "ar" || savedLocale === "en") {
+        loginUrl += `&lang=${savedLocale}`;
+      }
+    } catch {
+      // ignore
+    }
+    window.location.replace(loginUrl);
   };
 
   return (
@@ -125,7 +132,7 @@ function SignOutButton({ label, collapsed }: { label: string; collapsed: boolean
       }`}
     >
       <Icon name="logout" className="h-5 w-5 shrink-0" />
-      <span className={collapsed ? "lg:sr-only" : ""}>{busy ? "…" : label}</span>
+      <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{busy ? "…" : label}</span>
     </button>
   );
 }
@@ -309,14 +316,16 @@ export function Shell({
           {open && <button aria-label="Close menu" onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden" />}
 
           <aside
-            className={`fixed inset-y-0 start-0 z-50 flex h-full w-64 flex-col bg-navy-500 text-white shadow-2xl transition-[transform,width] duration-300 lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)] lg:translate-x-0 lg:rounded-2xl ${
-              open ? "translate-x-0" : "-translate-x-full rtl:translate-x-full"
-            } ${collapsed ? "lg:w-[4.75rem]" : "lg:w-52"}`}
+            className={`z-50 flex shrink-0 flex-col bg-navy-500 text-white shadow-2xl transition-[transform,width] duration-300 max-lg:fixed max-lg:inset-y-0 max-lg:start-0 max-lg:h-full max-lg:w-64 ${
+              open ? "max-lg:translate-x-0" : "max-lg:-translate-x-full max-lg:rtl:translate-x-full"
+            } lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)] lg:translate-x-0 lg:rounded-2xl ${
+              collapsed ? "lg:w-[4.75rem]" : "lg:w-56"
+            }`}
           >
             <div className={`flex items-center px-3 py-4 ${collapsed ? "lg:justify-center" : "justify-between"}`}>
               <Link href={buildHref("/dashboard")} prefetch={false} className={`flex items-center gap-2 overflow-hidden ${collapsed ? "lg:hidden" : ""}`}>
                 <Logo className="h-8 w-8 shrink-0 text-white" />
-                <span className="truncate text-xl font-bold tracking-tight">{brand}</span>
+                <span className="truncate text-xl font-bold tracking-tight" dir="ltr">{brand}</span>
               </Link>
               <button type="button" onClick={handleHamburger} aria-label={menuLabel} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg hover:bg-white/10">
                 <Icon name="menu" className="h-7 w-7" />
@@ -332,15 +341,15 @@ export function Shell({
                     href={buildHref(item.href)}
                     prefetch={false}
                     title={item.label}
-                    className={`flex items-center gap-3 rounded-lg px-3 py-3 text-[15px] transition ${
+                    className={`relative flex items-center gap-3 rounded-lg px-3 py-3 text-[15px] transition ${
                       active ? "bg-sun-400 font-semibold text-navy-800 shadow-md shadow-black/10" : "text-white hover:bg-white/10"
                     } ${collapsed ? "lg:justify-center lg:px-0" : ""}`}
                   >
                     <Icon name={item.icon} className="h-5 w-5 shrink-0" />
-                    <span className={collapsed ? "lg:sr-only" : ""}>{item.label}</span>
+                    <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{item.label}</span>
                     {item.icon === "mail" && unread > 0 && (
                       <span
-                        className={`ms-auto grid h-5 min-w-5 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-none text-white ${
+                        className={`ms-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-none text-white ${
                           collapsed ? "lg:absolute lg:end-1.5 lg:top-1.5" : ""
                         }`}
                         title={`${unread} unread`}

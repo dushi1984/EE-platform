@@ -7,7 +7,7 @@ import { fmtDate } from "@/lib/i18n";
 import { tt } from "@/lib/i18n-teacher";
 import { getStudentDetail } from "@/lib/queries-teacher";
 import { TopBar } from "@/components/shell/TopBar";
-import { Avatar, Badge, Card, Icon } from "@/components/ui";
+import { Avatar, BackArrow, Badge, Card, Icon } from "@/components/ui";
 import { MessageForm } from "@/components/teacher/MessageForm";
 import { DownloadButton } from "@/components/TaskSubmissionForm";
 
@@ -33,7 +33,7 @@ export default async function StudentMessagePage({ params }: { params: Promise<{
               <p className="text-sm text-slate-500">{detail.student.fullName} · {detail.student.grade}</p>
             </div>
           </div>
-          <Link href={`/students/${detail.student.id}`} className="text-sm font-bold text-blue-600 hover:underline">← {c.studentProfile}</Link>
+          <Link href={`/students/${detail.student.id}`} className="text-sm font-bold text-blue-600 hover:underline"><BackArrow /> {c.studentProfile}</Link>
         </div>
 
         <MessageForm studentId={detail.student.id} />

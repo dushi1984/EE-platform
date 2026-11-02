@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { useI18n } from "@/lib/i18n-client";
 import { submitQuizAction, type QuizResult } from "@/lib/actions";
-import { Card, Icon } from "@/components/ui";
+import { BackArrow, Card, Icon } from "@/components/ui";
 
 type PublicQuestion = { id: number; question: string; options: string[] };
 type Result = NonNullable<QuizResult>;
@@ -225,7 +225,7 @@ export function QuizRunner({
             onClick={() => setIdx(idx - 1)}
             className="rounded-xl px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
           >
-            ← {t("lesson.prev")}
+            <BackArrow /> {t("lesson.prev")}
           </button>
         ) : (
           <span />

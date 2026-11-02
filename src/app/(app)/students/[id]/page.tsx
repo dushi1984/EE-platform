@@ -7,7 +7,7 @@ import { fmtDate, tr } from "@/lib/i18n";
 import { taskTypeLabel, tt } from "@/lib/i18n-teacher";
 import { getStudentDetail, getStudentTrend } from "@/lib/queries-teacher";
 import { TopBar } from "@/components/shell/TopBar";
-import { Avatar, Badge, Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { Avatar, BackArrow, Badge, Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
 import { StatusPill } from "@/components/teacher/StatusPill";
 import { TrendChart } from "@/components/teacher/TrendChart";
 
@@ -30,7 +30,7 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
       <SectionTitle
         action={
           <Link href="/students" className="text-sm font-bold text-blue-600 hover:underline">
-            ← {c.backToStudents}
+            <BackArrow /> {c.backToStudents}
           </Link>
         }
       >

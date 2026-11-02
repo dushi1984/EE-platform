@@ -8,7 +8,7 @@ import { useI18n } from "@/lib/i18n-client";
 import { fmtMoney, tr } from "@/lib/i18n";
 import { checkoutAction, type CheckoutState } from "@/lib/actions";
 import { formatCardNumber } from "@/lib/gateway";
-import { Icon, Logo } from "@/components/ui";
+import { ForwardArrow, Icon, Logo } from "@/components/ui";
 import { navigateWithSession } from "@/components/shell/Shell";
 
 export type PayMethod = "instapay" | "card" | "wallet";
@@ -461,7 +461,7 @@ function SuccessPanel({ result, name, onClose }: { result: PaidResult; name: str
           }}
           className="rounded-lg bg-navy-500 px-4 py-2 text-xs font-bold text-white hover:bg-navy-600"
         >
-          {locale === "ar" ? "ابدأ التعلم" : "Start learning"} →
+          {locale === "ar" ? "ابدأ التعلم" : "Start learning"} <ForwardArrow />
         </button>
       </div>
     </div>

@@ -7,7 +7,7 @@ import { fmtDate, tr } from "@/lib/i18n";
 import { taskTypeLabel, tt } from "@/lib/i18n-teacher";
 import { getTaskById } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { Badge, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
 import { TaskActions } from "@/components/TaskActions";
 import { DownloadButton, RemoveSubmissionButton, SubmissionForm } from "@/components/TaskSubmissionForm";
 
@@ -42,7 +42,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
           <Link href="/tasks" className="font-medium text-navy-500 hover:underline dark:text-sky-300">
             {t("tasks.title")}
           </Link>
-          <span className="text-slate-400">›</span>
+          <CrumbSep />
           <span className="max-w-[40vw] truncate">{title}</span>
         </span>
       </SectionTitle>
@@ -81,7 +81,7 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                   </span>
                 )}
                 <Link href="/grades" className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300">
-                  {t("grades.title")} →
+                  {t("grades.title")} <ForwardArrow />
                 </Link>
               </div>
             </div>

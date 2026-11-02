@@ -1,21 +1,87 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { Locale } from "@/lib/i18n";
 import type { Theme } from "@/lib/i18n-server";
+import { useEffect } from "react";
+
+function persistBrowserPref(key: "locale" | "theme", value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+    window.document.cookie = `${key}=${value}; path=/; max-age=31536000; SameSite=Lax`;
+  } catch {
+    // ignore storage restrictions
+  }
+}
+
+export function LocaleSyncBridge({ locale }: { locale: Locale }) {
+  useEffect(() => {
+    try {
+      const url = new URL(window.location.href);
+      const urlLang = url.searchParams.get("lang");
+      if (urlLang === "en" || urlLang === "ar") {
+        persistBrowserPref("locale", urlLang);
+      } else {
+        const saved = window.localStorage.getItem("locale");
+        if ((saved === "en" || saved === "ar") && saved !== locale) {
+          url.searchParams.set("lang", saved);
+          window.location.replace(url.toString());
+          return;
+        }
+      }
+    } catch {
+      // ignore storage restrictions
+    }
+
+    const onClick = (e: MouseEvent) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const anchor = (e.target as Element | null)?.closest?.("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || anchor.target === "_blank" || anchor.hasAttribute("download")) return;
+      const rawHref = anchor.getAttribute("href");
+      if (!rawHref || rawHref.startsWith("#") || rawHref.startsWith("mailto:") || rawHref.startsWith("tel:")) return;
+      try {
+        const saved = window.localStorage.getItem("locale");
+        if (saved !== "en" && saved !== "ar") return;
+        const hasCookie = window.document.cookie.split(";").some((c) => c.trim() === `locale=${saved}`);
+        if (hasCookie && !window.location.search.includes("lang=")) return;
+        const nextUrl = new URL(anchor.href, window.location.origin);
+        if (nextUrl.origin !== window.location.origin || nextUrl.pathname.startsWith("/api/")) return;
+        if (!nextUrl.searchParams.has("lang")) {
+          nextUrl.searchParams.set("lang", saved);
+          anchor.href = nextUrl.toString();
+        }
+      } catch {
+        // ignore URL/storage errors
+      }
+    };
+
+    document.addEventListener("click", onClick, true);
+    return () => document.removeEventListener("click", onClick, true);
+  }, [locale]);
+
+  return null;
+}
+
+function subscribeNoop() {
+  return () => {};
+}
 
 export function ThemeToggle({ theme: initialTheme, label }: { theme: Theme; label: string }) {
-  const [theme, setTheme] = useState<Theme>(initialTheme);
-
-  useEffect(() => {
-    const isDark = document.documentElement.classList.contains("dark");
-    const saved = (localStorage.getItem("theme") as Theme) || (isDark ? "dark" : "light");
-    setTheme(saved);
-  }, []);
+  const clientInitial = useSyncExternalStore<Theme>(
+    subscribeNoop,
+    () => {
+      const saved = window.localStorage.getItem("theme");
+      if (saved === "dark" || saved === "light") return saved;
+      return document.documentElement.classList.contains("dark") ? "dark" : "light";
+    },
+    () => initialTheme,
+  );
+  const [overrideTheme, setOverrideTheme] = useState<Theme | null>(null);
+  const theme = overrideTheme ?? clientInitial;
 
   const toggleTheme = () => {
     const next: Theme = theme === "dark" ? "light" : "dark";
-    setTheme(next);
+    setOverrideTheme(next);
 
     if (next === "dark") {
       document.documentElement.classList.add("dark");
@@ -23,9 +89,8 @@ export function ThemeToggle({ theme: initialTheme, label }: { theme: Theme; labe
       document.documentElement.classList.remove("dark");
     }
 
+    persistBrowserPref("theme", next);
     try {
-      localStorage.setItem("theme", next);
-      document.cookie = `theme=${next}; path=/; max-age=31536000; SameSite=Lax`;
       const url = new URL(window.location.href);
       if (url.searchParams.has("theme")) {
         url.searchParams.set("theme", next);
@@ -48,7 +113,7 @@ export function ThemeToggle({ theme: initialTheme, label }: { theme: Theme; labe
       onClick={toggleTheme}
       aria-label={label}
       title={label}
-      className="grid h-10 w-10 place-items-center rounded-full bg-navy-900/60 text-white ring-1 ring-white/10 transition hover:bg-navy-900 active:scale-95"
+      className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-navy-900/60 text-white ring-1 ring-white/10 transition hover:bg-navy-900 active:scale-95"
     >
       {theme === "dark" ? (
         <svg viewBox="0 0 24 24" className="h-5 w-5 text-sun-400" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -67,52 +132,38 @@ export function ThemeToggle({ theme: initialTheme, label }: { theme: Theme; labe
 }
 
 export function LocaleToggle({ locale: initialLocale }: { locale: Locale }) {
-  const [current, setCurrent] = useState<Locale>(initialLocale);
-  const [changing, setChanging] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlLang = params.get("lang") as Locale | null;
-    const saved = (urlLang === "en" || urlLang === "ar" ? urlLang : (localStorage.getItem("locale") as Locale)) || initialLocale;
-    if (saved === "en" || saved === "ar") setCurrent(saved);
-  }, [initialLocale]);
+  const [pendingLocale, setPendingLocale] = useState<Locale | null>(null);
+  const current = pendingLocale ?? initialLocale;
+  const changing = pendingLocale !== null;
 
   const switchLocale = async (next: Locale) => {
     if (next === current || changing) return;
-    setChanging(true);
-    setCurrent(next);
-
-    document.documentElement.lang = next;
-    document.documentElement.dir = next === "ar" ? "rtl" : "ltr";
+    setPendingLocale(next);
+    persistBrowserPref("locale", next);
 
     try {
-      localStorage.setItem("locale", next);
-      document.cookie = `locale=${next}; path=/; max-age=31536000; SameSite=Lax`;
-    } catch {
-      // ignore
-    }
-
-    try {
+      const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer = ctrl ? setTimeout(() => ctrl.abort(), 1500) : null;
       await fetch("/api/preferences", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ locale: next }),
+        signal: ctrl?.signal,
       });
+      if (timer) clearTimeout(timer);
     } catch {
       // ignore
     }
 
-    // Navigate with explicit ?lang= and preserved ?session= so iframe environments
-    // without third-party cookies still switch language and RTL immediately.
     const url = new URL(window.location.href);
     url.searchParams.set("lang", next);
     try {
       const token =
         url.searchParams.get("session") ||
-        localStorage.getItem("insci_session") ||
-        sessionStorage.getItem("insci_session") ||
+        window.localStorage.getItem("insci_session") ||
+        window.sessionStorage.getItem("insci_session") ||
         "";
-      if (token && url.pathname !== "/login" && url.pathname !== "/register") {
+      if (token && url.pathname !== "/login" && url.pathname !== "/register" && !url.pathname.startsWith("/login/")) {
         url.searchParams.set("session", token);
       }
     } catch {
@@ -122,7 +173,7 @@ export function LocaleToggle({ locale: initialLocale }: { locale: Locale }) {
   };
 
   return (
-    <div className="flex items-center rounded-full bg-navy-900/60 p-1 ring-1 ring-white/10" dir="ltr">
+    <div className="flex shrink-0 items-center rounded-full bg-navy-900/60 p-1 ring-1 ring-white/10" dir="ltr">
       {(["en", "ar"] as const).map((l) => {
         const isActive = current === l;
         return (
@@ -136,7 +187,7 @@ export function LocaleToggle({ locale: initialLocale }: { locale: Locale }) {
               isActive
                 ? "bg-slate-900 text-white shadow"
                 : "text-white/80 hover:text-white"
-            }`}
+            } ${changing ? "opacity-75" : ""}`}
           >
             {l}
           </button>

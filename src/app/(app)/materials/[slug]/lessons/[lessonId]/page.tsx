@@ -6,7 +6,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { tr } from "@/lib/i18n";
 import { getMaterialBySlug } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { BackArrow, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
 import { Markdown } from "@/components/Markdown";
 import { QuizRunner } from "@/components/QuizRunner";
 import { LessonFinishCheckbox, VideoPlayer } from "@/components/VideoPlayer";
@@ -58,7 +58,7 @@ export default async function LessonPage({
           <Link href={`/materials/${material.slug}`} className="font-medium text-navy-500 hover:underline dark:text-sky-300">
             {t("materials.title")}
           </Link>
-          <span className="text-slate-400">›</span>
+          <CrumbSep />
           {showQuiz ? (
             <Link
               href={`/materials/${material.slug}/lessons/${lesson.id}`}
@@ -71,7 +71,7 @@ export default async function LessonPage({
           )}
           {showQuiz && (
             <>
-              <span className="text-slate-400">›</span>
+              <CrumbSep />
               <span>{t("lesson.quizStep")}</span>
             </>
           )}
@@ -84,7 +84,7 @@ export default async function LessonPage({
           <Card className="overflow-hidden">
             <div className="border-b border-slate-100 p-4 dark:border-slate-800">
               <Link href={`/materials/${material.slug}`} className="text-xs font-semibold text-navy-500 hover:underline dark:text-sky-300">
-                ← {t("lesson.backToMaterial")}
+                <BackArrow /> {t("lesson.backToMaterial")}
               </Link>
               <div className="mt-3 flex items-center gap-3">
                 <ProgressBar percent={percent} className="flex-1" />
@@ -162,7 +162,7 @@ export default async function LessonPage({
                   </Link>
                 ) : next ? (
                   <Link href={`/materials/${material.slug}/lessons/${next.id}`} className="rounded-xl bg-blue-500 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600">
-                    {t("lesson.next")} →
+                    {t("lesson.next")} <ForwardArrow />
                   </Link>
                 ) : null}
               </Card>
@@ -187,7 +187,7 @@ export default async function LessonPage({
                 <div>
                   {prev ? (
                     <Link href={`/materials/${material.slug}/lessons/${prev.id}`} className="text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white">
-                      ← {t("lesson.prev")}: {tr(locale, prev.title, prev.titleAr)}
+                      <BackArrow /> {t("lesson.prev")}: {tr(locale, prev.title, prev.titleAr)}
                     </Link>
                   ) : (
                     <span className="text-sm text-slate-400">—</span>
@@ -201,7 +201,7 @@ export default async function LessonPage({
                   )}
                   {next && (
                     <Link href={`/materials/${material.slug}/lessons/${next.id}`} className="rounded-xl bg-navy-500 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-600">
-                      {t("lesson.next")} →
+                      {t("lesson.next")} <ForwardArrow />
                     </Link>
                   )}
                 </div>
@@ -213,7 +213,7 @@ export default async function LessonPage({
                   <p className="mt-1 text-green-50">{t("lesson.finishedBody")}</p>
               <div className="mt-4 flex flex-wrap gap-3 print:hidden">
                 <Link href="/grades" className="inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
-                  {t("grades.title")} →
+                  {t("grades.title")} <ForwardArrow />
                 </Link>
                 <Link
                   href={`/materials/${material.slug}/certificate`}

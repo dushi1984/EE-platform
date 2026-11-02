@@ -99,6 +99,24 @@ export function EmptyState({ icon = "📭", title, body, action }: { icon?: stri
   );
 }
 
+/* ---------- RTL-aware directional glyphs ---------- */
+
+export function ForwardArrow({ className = "" }: { className?: string }) {
+  return <span aria-hidden className={`inline-block rtl:-scale-x-100 ${className}`}>→</span>;
+}
+
+export function BackArrow({ className = "" }: { className?: string }) {
+  return <span aria-hidden className={`inline-block rtl:-scale-x-100 ${className}`}>←</span>;
+}
+
+export function LaunchArrow({ className = "" }: { className?: string }) {
+  return <span aria-hidden className={`inline-block rtl:-scale-x-100 ${className}`}>↗</span>;
+}
+
+export function CrumbSep({ className = "text-slate-400" }: { className?: string }) {
+  return <span aria-hidden className={`inline-block rtl:-scale-x-100 ${className}`}>›</span>;
+}
+
 /* ---------- Icons ---------- */
 
 export function Icon({ name, className = "h-5 w-5" }: { name: "dashboard" | "tasks" | "materials" | "grades" | "profile" | "menu" | "grid" | "list" | "lock" | "tag" | "check" | "dots" | "logout" | "play" | "camera" | "download" | "upload" | "file" | "print" | "x" | "video" | "chevron" | "students" | "payments" | "plus" | "pencil" | "trash" | "mail" | "assign"; className?: string }) {
@@ -194,7 +212,7 @@ export function Icon({ name, className = "h-5 w-5" }: { name: "dashboard" | "tas
       );
     case "logout":
       return (
-        <svg {...common}>
+        <svg {...common} className={`${className} rtl:-scale-x-100`}>
           <path d="M10 17l5-5-5-5M15 12H3M21 3v18" />
         </svg>
       );

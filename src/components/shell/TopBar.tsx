@@ -19,7 +19,13 @@ export async function TopBar({ title, extra }: { title: string; extra?: ReactNod
             <div className="hidden min-w-0 sm:block">
               <p className="truncate font-bold leading-tight">{displayName(user.fullName)}</p>
               <p className="truncate text-xs text-white/75">
-                {user.role === "teacher" ? (locale === "ar" ? "معلمة" : "Teacher") : `${t("common.studentId")}: ${user.studentCode}`}
+                {user.role === "teacher" ? (
+                  locale === "ar" ? "معلمة" : "Teacher"
+                ) : (
+                  <>
+                    {t("common.studentId")}: <span dir="ltr">{user.studentCode}</span>
+                  </>
+                )}
               </p>
             </div>
           </Link>

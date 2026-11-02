@@ -5,7 +5,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { fill, timeAgo, tt } from "@/lib/i18n-teacher";
 import { getStudentRows, getStudentTrend } from "@/lib/queries-teacher";
 import { TopBar } from "@/components/shell/TopBar";
-import { Avatar, Card, Icon, ProgressBar } from "@/components/ui";
+import { Avatar, Card, ForwardArrow, Icon, ProgressBar } from "@/components/ui";
 import { StatusPill } from "@/components/teacher/StatusPill";
 import { TrendChart } from "@/components/teacher/TrendChart";
 
@@ -173,7 +173,7 @@ export default async function StudentsPage({ searchParams }: { searchParams: Pro
                   href={`/students/${selected.id}`}
                   className="flex items-center justify-center gap-2 rounded-xl bg-navy-500 px-4 py-2.5 text-xs font-bold text-white hover:bg-navy-600"
                 >
-                  {c.studentProfile} →
+                  {c.studentProfile} <ForwardArrow />
                 </Link>
                 <div className="grid grid-cols-2 gap-2">
                   <Link

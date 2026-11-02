@@ -6,7 +6,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { tr } from "@/lib/i18n";
 import { getMaterialBySlug } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Card, SectionTitle } from "@/components/ui";
+import { Card, CrumbSep, SectionTitle } from "@/components/ui";
 import { Markdown } from "@/components/Markdown";
 import { PdfToolbar } from "@/components/PdfToolbar";
 
@@ -52,14 +52,14 @@ export default async function LessonPdfPage({
           <Link href={`/materials/${material.slug}`} className="font-medium text-navy-500 hover:underline dark:text-sky-300">
             {t("materials.title")}
           </Link>
-          <span className="text-slate-400">›</span>
+          <CrumbSep />
           <Link
             href={`/materials/${material.slug}/lessons/${lesson.id}`}
             className="font-medium text-navy-500 hover:underline dark:text-sky-300"
           >
             {title}
           </Link>
-          <span className="text-slate-400">›</span>
+          <CrumbSep />
           <span>PDF</span>
         </span>
       </SectionTitle>
