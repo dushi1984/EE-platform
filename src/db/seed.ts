@@ -1,8 +1,8 @@
-import { db } from "@/db";
-import { count } from "drizzle-orm";
+import { db, pool } from "@/db";
+import { count, eq } from "drizzle-orm";
 import { grades, lessonProgress, lessons, materialViews, materials, purchases, quizQuestions, subjects, taskProgress, tasks, users } from "@/db/schema";
 import { hashPassword } from "@/lib/session";
-import { seedTeacherData } from "@/db/seed-teacher";
+import { seedTeacherData, TEACHER_CODE } from "@/db/seed-teacher";
 import { ensureSchema } from "@/db/bootstrap";
 
 export const DEMO_STUDENT_CODE = "12345";
@@ -358,14 +358,7 @@ function attachmentBodyFor(title: string, description: string) {
 }
 
 let teacherSeeded = false;
-export async function ensureSeeded() {
-  if (process.env.NEXT_PHASE === "phase-production-build") return;
-  await ensureBaseSeeded();
-  if (!teacherSeeded) {
-    await seedTeacherData();
-    teacherSeeded = true;
-  }
-}
+let fullSeedPromise: Promise<void> | null = null;
 
 function isUndefinedTableError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
@@ -376,21 +369,72 @@ function isUndefinedTableError(err: unknown): boolean {
   return false;
 }
 
-async function ensureBaseSeeded() {
-  if (seeded) return;
-  if (seeding) return seeding;
-  seeding = (async () => {
-    let value = 0;
+export async function ensureSeeded() {
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
+  if (seeded && teacherSeeded) return;
+  if (fullSeedPromise) return fullSeedPromise;
+
+  fullSeedPromise = (async () => {
     try {
-      [{ value }] = await db.select({ value: count() }).from(subjects);
+      const existingTeacher = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.studentCode, TEACHER_CODE))
+        .limit(1);
+      if (existingTeacher.length > 0) {
+        seeded = true;
+        teacherSeeded = true;
+        return;
+      }
     } catch (err) {
       if (isUndefinedTableError(err)) {
         await ensureSchema();
-        [{ value }] = await db.select({ value: count() }).from(subjects);
       } else {
         throw err;
       }
     }
+
+    const lockClient = await pool.connect();
+    try {
+      await lockClient.query("BEGIN");
+      await lockClient.query("SELECT pg_advisory_xact_lock(75827002)");
+
+      const recheck = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.studentCode, TEACHER_CODE))
+        .limit(1);
+      if (recheck.length > 0) {
+        seeded = true;
+        teacherSeeded = true;
+        await lockClient.query("COMMIT");
+        return;
+      }
+
+      await ensureBaseSeeded();
+      if (!teacherSeeded) {
+        await seedTeacherData();
+        teacherSeeded = true;
+      }
+      await lockClient.query("COMMIT");
+    } catch (err) {
+      await lockClient.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      lockClient.release();
+    }
+  })().finally(() => {
+    fullSeedPromise = null;
+  });
+
+  return fullSeedPromise;
+}
+
+async function ensureBaseSeeded() {
+  if (seeded) return;
+  if (seeding) return seeding;
+  seeding = (async () => {
+    const [{ value }] = await db.select({ value: count() }).from(subjects);
     if (value > 0) {
       seeded = true;
       return;
