@@ -33,7 +33,9 @@ const themeScript = `
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
   const [locale, theme] = await Promise.all([getLocale(), getTheme()]);
-  await ensureSeeded();
+  if (process.env.DATABASE_URL && process.env.NEXT_PHASE !== "phase-production-build") {
+    await ensureSeeded();
+  }
 
   return (
     <html lang={locale} dir={locale === "ar" ? "rtl" : "ltr"} className={theme === "dark" ? "dark" : undefined} suppressHydrationWarning>

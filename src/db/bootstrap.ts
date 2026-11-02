@@ -1,0 +1,231 @@
+import { sql } from "drizzle-orm";
+import { db } from "@/db";
+
+const BOOTSTRAP_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS "academic_levels" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "name" text NOT NULL,
+    "name_ar" text DEFAULT '' NOT NULL,
+    "sort_order" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "academic_classes" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "level_id" integer NOT NULL REFERENCES "academic_levels"("id") ON DELETE cascade,
+    "name" text NOT NULL,
+    "name_ar" text DEFAULT '' NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "academic_terms" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "name" text NOT NULL,
+    "name_ar" text DEFAULT '' NOT NULL,
+    "is_active" boolean DEFAULT true NOT NULL,
+    "sort_order" integer DEFAULT 0 NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "subjects" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "name" text NOT NULL,
+    "name_ar" text NOT NULL,
+    "color" text DEFAULT 'indigo' NOT NULL,
+    "icon" text DEFAULT '📚' NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "users" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "full_name" text NOT NULL,
+    "email" text,
+    "phone" text,
+    "parent_phone" text DEFAULT '' NOT NULL,
+    "student_code" text NOT NULL,
+    "password_hash" text NOT NULL,
+    "qr_token" text NOT NULL,
+    "avatar_url" text,
+    "grade" text DEFAULT 'Grade 10' NOT NULL,
+    "class_id" integer,
+    "date_of_birth" timestamp with time zone,
+    "parent_name" text DEFAULT '' NOT NULL,
+    "last_login_at" timestamp with time zone,
+    "role" text DEFAULT 'student' NOT NULL,
+    "session_version" integer DEFAULT 0 NOT NULL,
+    "notify_email" boolean DEFAULT true NOT NULL,
+    "notify_sms" boolean DEFAULT true NOT NULL,
+    "notify_tasks" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "materials" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "slug" text NOT NULL,
+    "title" text NOT NULL,
+    "title_ar" text NOT NULL,
+    "description" text DEFAULT '' NOT NULL,
+    "description_ar" text DEFAULT '' NOT NULL,
+    "subject_id" integer NOT NULL REFERENCES "subjects"("id") ON DELETE cascade,
+    "thumbnail_url" text,
+    "price_cents" integer DEFAULT 0 NOT NULL,
+    "is_new" boolean DEFAULT false NOT NULL,
+    "published" boolean DEFAULT true NOT NULL,
+    "kind" text DEFAULT 'video' NOT NULL,
+    "term_id" integer,
+    "file_size" text DEFAULT '' NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "lessons" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "material_id" integer NOT NULL REFERENCES "materials"("id") ON DELETE cascade,
+    "title" text NOT NULL,
+    "title_ar" text NOT NULL,
+    "content" text DEFAULT '' NOT NULL,
+    "video_url" text,
+    "position" integer DEFAULT 0 NOT NULL,
+    "duration_minutes" integer DEFAULT 10 NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "tasks" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "title" text NOT NULL,
+    "title_ar" text NOT NULL,
+    "description" text DEFAULT '' NOT NULL,
+    "description_ar" text DEFAULT '' NOT NULL,
+    "subject_id" integer NOT NULL REFERENCES "subjects"("id") ON DELETE cascade,
+    "task_type" text DEFAULT 'assignment' NOT NULL,
+    "attachment_name" text,
+    "attachment_body" text DEFAULT '' NOT NULL,
+    "status" text DEFAULT 'open' NOT NULL,
+    "term_id" integer,
+    "target_grade" text DEFAULT 'all' NOT NULL,
+    "max_score" integer DEFAULT 100 NOT NULL,
+    "due_date" timestamp with time zone NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "grades" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "subject_id" integer NOT NULL REFERENCES "subjects"("id") ON DELETE cascade,
+    "lesson_id" integer REFERENCES "lessons"("id") ON DELETE set null,
+    "task_id" integer REFERENCES "tasks"("id") ON DELETE set null,
+    "title" text NOT NULL,
+    "title_ar" text DEFAULT '' NOT NULL,
+    "kind" text DEFAULT 'quiz' NOT NULL,
+    "score" integer NOT NULL,
+    "max_score" integer NOT NULL,
+    "graded_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "lesson_progress" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "lesson_id" integer NOT NULL REFERENCES "lessons"("id") ON DELETE cascade,
+    "completed_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "material_views" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "material_id" integer NOT NULL REFERENCES "materials"("id") ON DELETE cascade,
+    "viewed_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "messages" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "sender_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "student_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "recipient_type" text DEFAULT 'student' NOT NULL,
+    "body" text NOT NULL,
+    "attachment_name" text,
+    "attachment_data" text,
+    "read_at" timestamp with time zone,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "payment_methods" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "kind" text NOT NULL,
+    "label" text NOT NULL,
+    "details" text DEFAULT '' NOT NULL,
+    "is_default" boolean DEFAULT false NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "payments" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "reference" text NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "material_id" integer REFERENCES "materials"("id") ON DELETE set null,
+    "amount_cents" integer NOT NULL,
+    "method" text NOT NULL,
+    "method_label" text DEFAULT '' NOT NULL,
+    "status" text DEFAULT 'pending' NOT NULL,
+    "failure_reason" text,
+    "gateway_ref" text,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "completed_at" timestamp with time zone
+  )`,
+  `CREATE TABLE IF NOT EXISTS "purchases" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "material_id" integer NOT NULL REFERENCES "materials"("id") ON DELETE cascade,
+    "price_paid_cents" integer DEFAULT 0 NOT NULL,
+    "payment_method" text DEFAULT 'card' NOT NULL,
+    "status" text DEFAULT 'paid' NOT NULL,
+    "purchased_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "quiz_attempts" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "lesson_id" integer NOT NULL REFERENCES "lessons"("id") ON DELETE cascade,
+    "score" integer NOT NULL,
+    "total" integer NOT NULL,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "quiz_questions" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "lesson_id" integer NOT NULL REFERENCES "lessons"("id") ON DELETE cascade,
+    "question" text NOT NULL,
+    "question_ar" text,
+    "options" jsonb NOT NULL,
+    "correct_index" integer NOT NULL,
+    "explanation" text
+  )`,
+  `CREATE TABLE IF NOT EXISTS "task_progress" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "task_id" integer NOT NULL REFERENCES "tasks"("id") ON DELETE cascade,
+    "status" text DEFAULT 'todo' NOT NULL,
+    "progress" integer DEFAULT 0 NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS "task_submissions" (
+    "id" serial PRIMARY KEY NOT NULL,
+    "user_id" integer NOT NULL REFERENCES "users"("id") ON DELETE cascade,
+    "task_id" integer NOT NULL REFERENCES "tasks"("id") ON DELETE cascade,
+    "file_name" text NOT NULL,
+    "note" text DEFAULT '' NOT NULL,
+    "file_data" text,
+    "score" integer,
+    "graded_at" timestamp with time zone,
+    "submitted_at" timestamp with time zone DEFAULT now() NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS "academic_classes_level_idx" ON "academic_classes" ("level_id")`,
+  `CREATE INDEX IF NOT EXISTS "grades_user_idx" ON "grades" ("user_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "progress_user_lesson_idx" ON "lesson_progress" ("user_id","lesson_id")`,
+  `CREATE INDEX IF NOT EXISTS "lessons_material_idx" ON "lessons" ("material_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "views_user_material_idx" ON "material_views" ("user_id","material_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "materials_slug_idx" ON "materials" ("slug")`,
+  `CREATE INDEX IF NOT EXISTS "materials_subject_idx" ON "materials" ("subject_id")`,
+  `CREATE INDEX IF NOT EXISTS "messages_student_idx" ON "messages" ("student_id")`,
+  `CREATE INDEX IF NOT EXISTS "messages_sender_idx" ON "messages" ("sender_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "payments_reference_idx" ON "payments" ("reference")`,
+  `CREATE INDEX IF NOT EXISTS "payments_user_idx" ON "payments" ("user_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "purchases_user_material_idx" ON "purchases" ("user_id","material_id")`,
+  `CREATE INDEX IF NOT EXISTS "quiz_lesson_idx" ON "quiz_questions" ("lesson_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "task_progress_user_task_idx" ON "task_progress" ("user_id","task_id")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "submissions_user_task_idx" ON "task_submissions" ("user_id","task_id")`,
+  `CREATE INDEX IF NOT EXISTS "tasks_due_idx" ON "tasks" ("due_date")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "users_email_idx" ON "users" ("email")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "users_phone_idx" ON "users" ("phone")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "users_student_code_idx" ON "users" ("student_code")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "users_qr_token_idx" ON "users" ("qr_token")`,
+];
+
+export async function ensureSchema() {
+  for (const statement of BOOTSTRAP_STATEMENTS) {
+    await db.execute(sql.raw(statement));
+  }
+}

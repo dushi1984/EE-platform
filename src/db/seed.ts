@@ -3,6 +3,7 @@ import { count } from "drizzle-orm";
 import { grades, lessonProgress, lessons, materialViews, materials, purchases, quizQuestions, subjects, taskProgress, tasks, users } from "@/db/schema";
 import { hashPassword } from "@/lib/session";
 import { seedTeacherData } from "@/db/seed-teacher";
+import { ensureSchema } from "@/db/bootstrap";
 
 export const DEMO_STUDENT_CODE = "12345";
 export const DEMO_QR_TOKEN = "FATMA-DEMO-2026";
@@ -358,6 +359,7 @@ function attachmentBodyFor(title: string, description: string) {
 
 let teacherSeeded = false;
 export async function ensureSeeded() {
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
   await ensureBaseSeeded();
   if (!teacherSeeded) {
     await seedTeacherData();
@@ -365,11 +367,30 @@ export async function ensureSeeded() {
   }
 }
 
+function isUndefinedTableError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if ("code" in err && err.code === "42P01") return true;
+  if ("cause" in err && err.cause && typeof err.cause === "object" && "code" in err.cause && err.cause.code === "42P01") {
+    return true;
+  }
+  return false;
+}
+
 async function ensureBaseSeeded() {
   if (seeded) return;
   if (seeding) return seeding;
   seeding = (async () => {
-    const [{ value }] = await db.select({ value: count() }).from(subjects);
+    let value = 0;
+    try {
+      [{ value }] = await db.select({ value: count() }).from(subjects);
+    } catch (err) {
+      if (isUndefinedTableError(err)) {
+        await ensureSchema();
+        [{ value }] = await db.select({ value: count() }).from(subjects);
+      } else {
+        throw err;
+      }
+    }
     if (value > 0) {
       seeded = true;
       return;
@@ -395,7 +416,12 @@ async function ensureBaseSeeded() {
           priceCents: m.priceCents,
           isNew: m.isNew,
         })
+        .onConflictDoNothing()
         .returning();
+      if (!material) {
+        seeded = true;
+        return;
+      }
       materialIdBySlug.set(m.slug, material.id);
 
       const insertedLessons = await db
