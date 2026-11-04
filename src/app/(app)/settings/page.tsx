@@ -19,7 +19,7 @@ import {
   createTermAction,
 } from "@/lib/teacher-actions";
 import { TopBar } from "@/components/shell/TopBar";
-import { Card, Icon } from "@/components/ui";
+import { Card, Icon, SubjectBadge } from "@/components/ui";
 import {
   DeleteClassBtn,
   DeleteLevelBtn,
@@ -89,8 +89,12 @@ export default async function SettingsPage() {
         <h2 className="text-lg font-bold text-slate-900 dark:text-white">{c.correctionPolicy}</h2>
         <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{c.correctionPolicyBody}</p>
         <div className="mt-3 flex flex-wrap gap-2 text-xs font-bold">
-          <span className="rounded-full bg-green-100 px-3 py-1.5 text-green-700 dark:bg-green-500/20 dark:text-green-300">✓ {c.autoGrading}</span>
-          <span className="rounded-full bg-amber-100 px-3 py-1.5 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">✍️ {c.manualGrading}</span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 px-3 py-1.5 text-green-700 dark:bg-green-500/20 dark:text-green-300">
+            <Icon name="check" className="h-3.5 w-3.5" /> {c.autoGrading}
+          </span>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-3 py-1.5 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+            <Icon name="pencil" className="h-3.5 w-3.5" /> {c.manualGrading}
+          </span>
         </div>
       </Card>
 
@@ -144,7 +148,7 @@ export default async function SettingsPage() {
                         <span className="text-[11px] font-medium text-slate-400">
                           {studentsByClass.get(cls.id) ?? 0}
                         </span>
-                        <DeleteClassBtn id={cls.id} label="✕" />
+                        <DeleteClassBtn id={cls.id} label="×" />
                       </li>
                     ))}
                   </ul>
@@ -200,8 +204,9 @@ export default async function SettingsPage() {
         <ul className="mt-3 divide-y divide-slate-100 dark:divide-slate-800">
           {subjectsList.map((s) => (
             <li key={s.id} className="flex items-center justify-between gap-3 py-3">
-              <p className="font-bold text-slate-900 dark:text-white">
-                {s.icon} {tr(locale, s.name, s.nameAr)}
+              <p className="inline-flex items-center gap-2.5 font-bold text-slate-900 dark:text-white">
+                <SubjectBadge icon={s.icon} name={s.name} size="sm" />
+                <span>{tr(locale, s.name, s.nameAr)}</span>
               </p>
               <DeleteSubjectBtn id={s.id} label={c.deleteLabel} inUse={(useBySubject.get(s.id) ?? 0) > 0} inUseMsg={c.subjectInUse} />
             </li>
@@ -215,7 +220,13 @@ export default async function SettingsPage() {
             <input name="nameAr" placeholder="الكيمياء" className={input} />
           </Field>
           <Field label={c.subjectIcon}>
-            <input name="icon" placeholder="🧪" className={input} />
+            <select name="icon" defaultValue="science" className={input}>
+              <option value="chemistry">{locale === "ar" ? "كيمياء (قارورة)" : "Chemistry (Flask)"}</option>
+              <option value="physics">{locale === "ar" ? "فيزياء (ذرة)" : "Physics (Atom)"}</option>
+              <option value="biology">{locale === "ar" ? "أحياء (DNA)" : "Biology (DNA)"}</option>
+              <option value="mathematics">{locale === "ar" ? "رياضيات (فرجار)" : "Mathematics (Compass)"}</option>
+              <option value="science">{locale === "ar" ? "علوم عامة" : "General Science"}</option>
+            </select>
           </Field>
           <Field label={c.subjectColor}>
             <input name="color" placeholder="emerald" className={input} dir="ltr" />

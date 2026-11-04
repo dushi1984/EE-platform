@@ -4,6 +4,7 @@ import { db } from "@/db";
 import { taskSubmissions } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { parseDataUrl } from "@/lib/dataurl";
+import { downloadFromFilesBucket, guessMimeType, parseGoogleDriveUrl } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
@@ -11,12 +12,33 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   const user = await getCurrentUser();
   if (!user) return new NextResponse("Unauthorized", { status: 401 });
   const { id } = await params;
-  const sub = await db.query.taskSubmissions.findFirst({ where: eq(taskSubmissions.id, Number(id)), with: { user: true, task: true } });
+  const sub = await db.query.taskSubmissions.findFirst({
+    where: eq(taskSubmissions.id, Number(id)),
+    with: { user: true, task: true },
+  });
   if (!sub) return new NextResponse("Not found", { status: 404 });
-  // Teachers can read every submission; students only their own
   if (user.role !== "teacher" && sub.userId !== user.id) return new NextResponse("Forbidden", { status: 403 });
 
   const name = sub.fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "submission";
+
+  if (sub.fileStoragePath) {
+    const cloud = await downloadFromFilesBucket(sub.fileStoragePath);
+    if (cloud) {
+      const mime = guessMimeType(name, sub.fileMime || cloud.contentType);
+      return new NextResponse(new Uint8Array(cloud.buffer), {
+        headers: {
+          "Content-Type": mime,
+          "Content-Disposition": `attachment; filename="${name}"`,
+        },
+      });
+    }
+  }
+
+  if (sub.fileUrl) {
+    const drive = parseGoogleDriveUrl(sub.fileUrl);
+    return NextResponse.redirect(drive ? drive.downloadUrl : sub.fileUrl);
+  }
+
   const uploaded = parseDataUrl(sub.fileData);
   if (uploaded) {
     return new NextResponse(new Uint8Array(uploaded.buffer), {

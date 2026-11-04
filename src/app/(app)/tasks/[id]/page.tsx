@@ -1,14 +1,17 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
+import type { ReactNode } from "react";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
 import { taskTypeLabel, tt } from "@/lib/i18n-teacher";
 import { getTaskById } from "@/lib/queries";
+import { parseGoogleDriveUrl } from "@/lib/storage";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { Badge, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 import { TaskActions } from "@/components/TaskActions";
+import { TaskQuizRunner } from "@/components/TaskQuizRunner";
 import { DownloadButton, RemoveSubmissionButton, SubmissionForm } from "@/components/TaskSubmissionForm";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
@@ -29,15 +32,14 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
   if (!task) notFound();
 
   const title = tr(locale, task.title, task.titleAr);
+  const driveAttachment = parseGoogleDriveUrl(task.attachmentUrl);
+  const hasQuiz = Array.isArray(task.quizQuestions) && task.quizQuestions.length > 0;
 
   return (
     <>
       <TopBar title={t("tasks.title")} />
 
-      <SectionTitle
-        center
-        action={null}
-      >
+      <SectionTitle center action={null}>
         <span className="flex items-center gap-2 text-xl">
           <Link href="/tasks" className="font-medium text-navy-500 hover:underline dark:text-sky-300">
             {t("tasks.title")}
@@ -49,23 +51,40 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
 
       {/* Task information */}
       <Card className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white">{t("tasks.info")}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">{t("tasks.info")}</h2>
+            {task.isPersonal && (
+              <Badge tone="personal">{locale === "ar" ? "مخصص لك" : "Assigned to you"}</Badge>
+            )}
+          </div>
           <TaskActions taskId={task.id} status={task.status} progress={task.progress} />
         </div>
         <dl>
           <Row label={t("tasks.taskTitle")} value={title} bold />
-          <Row label={t("tasks.taskType")} value={`${task.subject.icon} ${taskTypeLabel(locale, task.taskType)}`} />
+          <Row
+            label={t("tasks.taskType")}
+            value={
+              <span className="inline-flex items-center gap-2">
+                <SubjectBadge icon={task.subject.icon} name={task.subject.name} size="xs" />
+                <span>{tr(locale, task.subject.name, task.subject.nameAr)}</span>
+                <span className="text-slate-400">·</span>
+                <span className="font-semibold">{taskTypeLabel(locale, task.taskType)}</span>
+              </span>
+            }
+          />
           <Row label={t("tasks.dueDate")} value={fmtDate(locale, task.dueDate)} />
           <Row label={t("tasks.description")} value={tr(locale, task.description, task.descriptionAr) || "—"} />
           {task.submission?.score !== null && task.submission?.score !== undefined ? (
             <div className="flex flex-col gap-3 bg-blue-50/60 px-5 py-4 dark:bg-blue-500/10 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <span className="grid h-11 w-11 place-items-center rounded-xl bg-blue-500 text-white">
-                  <Icon name="grades" className="h-6 w-6" />
+                  <Icon name="trophy" className="h-6 w-6" />
                 </span>
                 <div>
-                  <p className="text-sm font-semibold text-slate-500">{locale === "ar" ? "الدرجة التي حصلت عليها" : "Grade received"}</p>
+                  <p className="text-sm font-semibold text-slate-500">
+                    {locale === "ar" ? "الدرجة التي حصلت عليها" : "Grade received"}
+                  </p>
                   <p className="text-lg font-extrabold text-slate-900 dark:text-white" dir="ltr">
                     {task.submission.score} / {task.submission.maxScore}
                     <span className="ms-2 text-sm font-bold text-blue-600">
@@ -80,7 +99,10 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
                     {locale === "ar" ? "تم التقييم" : "Graded"} {fmtDate(locale, task.submission.gradedAt)}
                   </span>
                 )}
-                <Link href="/grades" className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300">
+                <Link
+                  href="/grades"
+                  className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300"
+                >
                   {t("grades.title")} <ForwardArrow />
                 </Link>
               </div>
@@ -99,67 +121,121 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
       </Card>
 
       {/* Attachment */}
-      <Card className="overflow-hidden">
-        <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
-          {t("tasks.attachment")}
-        </h2>
-        <div className="px-5 py-4">
-          {task.attachmentName ? (
-            <div className="flex items-center gap-3 rounded-xl bg-slate-100 px-4 py-3 dark:bg-slate-800">
-              <Icon name="file" className="h-6 w-6 shrink-0 text-slate-500" />
-              <span className="min-w-0 flex-1 truncate font-medium text-slate-700 dark:text-slate-200">
-                {task.attachmentName}
-              </span>
-              <DownloadButton url={`/api/tasks/${task.id}/attachment`} label={t("tasks.download")} />
-            </div>
-          ) : (
-            <p className="text-sm text-slate-500">{t("tasks.noAttachment")}</p>
-          )}
-        </div>
-      </Card>
-
-      {/* Submission */}
-      <Card className="overflow-hidden">
-        <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
-          {task.submission ? t("tasks.submitted") : t("tasks.uploadFile")}
-        </h2>
-        <div className="space-y-4 px-5 py-5">
-          {task.submission ? (
-            <div className="rounded-2xl border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-500/10">
-              <div className="flex flex-wrap items-center gap-3">
-                <span className="grid h-11 w-11 place-items-center rounded-xl bg-green-500 text-white">
-                  <Icon name="check" className="h-6 w-6" />
+      {(task.attachmentName || task.attachmentUrl || !hasQuiz) && (
+        <Card className="overflow-hidden">
+          <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
+            {t("tasks.attachment")}
+          </h2>
+          <div className="px-5 py-4">
+            {task.attachmentName || task.attachmentUrl ? (
+              <div className="flex flex-wrap items-center gap-3 rounded-xl bg-slate-100 px-4 py-3 dark:bg-slate-800">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-white text-navy-600 shadow-xs dark:bg-slate-900 dark:text-sky-300">
+                  <Icon name={driveAttachment ? "drive" : "file"} className="h-5 w-5" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-bold text-slate-900 dark:text-white">{task.submission.fileName}</p>
-                  <p className="text-xs text-slate-500">
-                    {t("tasks.submittedOn")} {fmtDate(locale, task.submission.submittedAt)}
+                  <p className="truncate font-semibold text-slate-800 dark:text-slate-100">
+                    {task.attachmentName || "Document"}
                   </p>
-                  {task.submission.note && <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.submission.note}</p>}
+                  <p className="text-[11px] text-slate-500">
+                    {driveAttachment
+                      ? "Google Drive"
+                      : task.attachmentStoragePath
+                        ? locale === "ar"
+                          ? "سحابة Supabase (files)"
+                          : "Supabase Cloud (files)"
+                        : ""}
+                  </p>
                 </div>
-                <RemoveSubmissionButton taskId={task.id} />
+                {driveAttachment ? (
+                  <a
+                    href={driveAttachment.viewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-navy-500 px-3.5 py-2 text-xs font-bold text-white hover:bg-navy-600"
+                  >
+                    <Icon name="drive" className="h-4 w-4" />
+                    {locale === "ar" ? "فتح في Google Drive" : "Open in Drive"}
+                  </a>
+                ) : (
+                  <DownloadButton url={`/api/tasks/${task.id}/attachment`} label={t("tasks.download")} />
+                )}
               </div>
-            </div>
-          ) : null}
-          <div>
-            {task.submission && <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">{t("tasks.resubmit")}</p>}
-            {task.isClosed ? (
-              <p className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">{tt(locale).taskClosedNote}</p>
             ) : (
-              <SubmissionForm taskId={task.id} />
+              <p className="text-sm text-slate-500">{t("tasks.noAttachment")}</p>
             )}
           </div>
-        </div>
-      </Card>
+        </Card>
+      )}
+
+      {/* Interactive Quiz OR File/Text Submission */}
+      {hasQuiz ? (
+        <Card className="overflow-hidden">
+          <div className="flex items-center gap-2.5 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+            <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-300">
+              <Icon name="quiz" className="h-5 w-5" />
+            </span>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+              {locale === "ar" ? "أسئلة الاختبار التفاعلي" : "Interactive Quiz"}
+            </h2>
+          </div>
+          <div className="p-5">
+            <TaskQuizRunner
+              taskId={task.id}
+              questions={task.quizQuestions!}
+              maxScore={task.maxScore}
+              disabled={task.isClosed}
+            />
+          </div>
+        </Card>
+      ) : (
+        <Card className="overflow-hidden">
+          <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
+            {task.submission ? t("tasks.submitted") : t("tasks.uploadFile")}
+          </h2>
+          <div className="space-y-4 px-5 py-5">
+            {task.submission ? (
+              <div className="rounded-2xl border border-green-200 bg-green-50 p-4 dark:border-green-900 dark:bg-green-500/10">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-green-500 text-white">
+                    <Icon name="check" className="h-6 w-6" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-bold text-slate-900 dark:text-white">{task.submission.fileName}</p>
+                    <p className="text-xs text-slate-500">
+                      {t("tasks.submittedOn")} {fmtDate(locale, task.submission.submittedAt)}
+                    </p>
+                    {task.submission.note && (
+                      <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.submission.note}</p>
+                    )}
+                  </div>
+                  <RemoveSubmissionButton taskId={task.id} />
+                </div>
+              </div>
+            ) : null}
+            <div>
+              {task.submission && (
+                <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">{t("tasks.resubmit")}</p>
+              )}
+              {task.isClosed ? (
+                <p className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  {tt(locale).taskClosedNote}
+                </p>
+              ) : (
+                <SubmissionForm taskId={task.id} />
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
     </>
   );
 }
 
-function Row({ label, value, bold = false }: { label: string; value: string; bold?: boolean }) {
+function Row({ label, value, bold = false }: { label: string; value: ReactNode; bold?: boolean }) {
   return (
     <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-3.5 last:border-0 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
       <dt className="shrink-0 text-sm text-slate-500">{label}</dt>
-      <dd className={`text-sm sm:max-w-[60%] sm:text-end ${bold ? "font-bold text-slate-900 dark:text-white" : "text-slate-700 dark:text-slate-200"}`}>
+      <dd className={`text-sm sm:max-w-[65%] sm:text-end ${bold ? "font-bold text-slate-900 dark:text-white" : "text-slate-700 dark:text-slate-200"}`}>
         {value}
       </dd>
     </div>

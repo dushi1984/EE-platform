@@ -5,7 +5,7 @@ import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { getAllSubjects, getMaterialsForUser } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { EmptyState, Icon, SectionTitle } from "@/components/ui";
+import { EmptyState, Icon, SectionTitle, SubjectGlyph } from "@/components/ui";
 import { MaterialCard } from "@/components/MaterialCard";
 import { TeacherMaterialsView } from "@/components/teacher/TeacherMaterialsView";
 
@@ -81,13 +81,14 @@ export default async function MaterialsPage({
             <Link
               key={s.id}
               href={`/materials?subject=${s.name.toLowerCase()}&view=${view}${q ? `&q=${q}` : ""}`}
-              className={`rounded-xl px-3.5 py-2 font-semibold whitespace-nowrap transition ${
+              className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 font-semibold whitespace-nowrap transition ${
                 subject?.toLowerCase() === s.name.toLowerCase()
                   ? "bg-navy-500 text-white shadow-md shadow-navy-500/20"
                   : "bg-white text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200"
               }`}
             >
-              {s.icon} {locale === "ar" ? s.nameAr : s.name}
+              <SubjectGlyph icon={s.icon} name={s.name} className="h-4 w-4" />
+              <span>{locale === "ar" ? s.nameAr : s.name}</span>
             </Link>
           ))}
         </div>

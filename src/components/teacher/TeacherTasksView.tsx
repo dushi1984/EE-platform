@@ -59,7 +59,14 @@ export async function TeacherTasksView({ taskId, tab }: { taskId?: string; tab?:
                       <tr key={row.id} className={`border-t border-slate-100 transition dark:border-slate-800 ${on ? "bg-blue-50 dark:bg-blue-500/10" : "hover:bg-slate-50 dark:hover:bg-slate-800/50"}`}>
                         <td>
                           <Link href={href} className="block px-5 py-4 font-bold text-slate-900 dark:text-white">
-                            {tr(locale, row.title, row.titleAr)}
+                            <span>{tr(locale, row.title, row.titleAr)}</span>
+                            {row.targetStudentName && (
+                              <span className="mt-1 block">
+                                <span className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-0.5 text-[11px] font-bold text-violet-800 dark:bg-violet-500/20 dark:text-violet-200">
+                                  {locale === "ar" ? `خاص: ${row.targetStudentName}` : `Student: ${row.targetStudentName}`}
+                                </span>
+                              </span>
+                            )}
                           </Link>
                         </td>
                         <td>

@@ -114,7 +114,7 @@ export function TaskActions({ taskId, status, progress }: { taskId: number; stat
               onClick={handleDelete}
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
             >
-              <span>🗑️</span>
+              <Icon name="trash" className="h-3.5 w-3.5" />
               <span>{locale === "ar" ? "حذف من قائمتي" : "Remove from my tasks"}</span>
             </button>
           </div>

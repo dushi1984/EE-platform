@@ -1,9 +1,32 @@
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
-import { grades, lessonProgress, lessons, materialViews, materials, messages, purchases, subjects, taskProgress, taskSubmissions, tasks, users, type TaskStatus } from "@/db/schema";
-import { and, asc, desc, eq, inArray, or, sql } from "drizzle-orm";
+import {
+  grades,
+  lessonProgress,
+  lessons,
+  materialViews,
+  materials,
+  messages,
+  purchases,
+  subjects,
+  taskProgress,
+  taskSubmissions,
+  tasks,
+  users,
+  type TaskQuizQuestion,
+  type TaskStatus,
+} from "@/db/schema";
 import { ensureSeeded } from "@/db/seed";
 
-const DAY = 24 * 60 * 60 * 1000;
+export function taskAppliesToStudent(
+  task: { targetStudentId: number | null; targetGrade: string },
+  student: { id: number; grade: string },
+): boolean {
+  if (task.targetStudentId !== null && task.targetStudentId !== undefined) {
+    return task.targetStudentId === student.id;
+  }
+  return task.targetGrade === "all" || task.targetGrade === student.grade;
+}
 
 export type TaskRow = {
   id: number;
@@ -19,54 +42,60 @@ export type TaskRow = {
   taskType: string;
   attachmentName: string | null;
   hasSubmission: boolean;
+  isPersonal: boolean;
+  hasQuiz: boolean;
 };
 
-export async function getAllSubjects() {
-  await ensureSeeded();
-  return await db.query.subjects.findMany();
-}
+const DAY = 86_400_000;
 
 export async function getTasksForUser(userId: number): Promise<TaskRow[]> {
   await ensureSeeded();
-  const me = await db.query.users.findFirst({ where: eq(users.id, userId) });
-  const rows = await db
-    .select({ task: tasks, subject: subjects, progress: taskProgress, submission: taskSubmissions })
-    .from(tasks)
-    .innerJoin(subjects, eq(subjects.id, tasks.subjectId))
-    .leftJoin(taskProgress, and(eq(taskProgress.taskId, tasks.id), eq(taskProgress.userId, userId)))
-    .leftJoin(taskSubmissions, and(eq(taskSubmissions.taskId, tasks.id), eq(taskSubmissions.userId, userId)))
-    .where(or(eq(tasks.targetGrade, "all"), eq(tasks.targetGrade, me?.grade ?? "all")))
-    .orderBy(asc(tasks.dueDate));
-
+  const [me, allTasks, progressRows, submissionRows] = await Promise.all([
+    db.query.users.findFirst({ where: eq(users.id, userId) }),
+    db.query.tasks.findMany({ with: { subject: true }, orderBy: [asc(tasks.dueDate)] }),
+    db.select().from(taskProgress).where(eq(taskProgress.userId, userId)),
+    db.select({ taskId: taskSubmissions.taskId }).from(taskSubmissions).where(eq(taskSubmissions.userId, userId)),
+  ]);
+  const myGrade = me?.grade ?? "Grade 10";
+  const byTask = new Map(progressRows.map((p) => [p.taskId, p]));
+  const submittedSet = new Set(submissionRows.map((s) => s.taskId));
   const now = Date.now();
-  return rows
-    .filter((r) => r.progress?.status !== "dismissed")
-    .map((r) => {
-    const status = (r.progress?.status ?? "todo") as TaskStatus;
-    return {
-      id: r.task.id,
-      title: r.task.title,
-      titleAr: r.task.titleAr,
-      description: r.task.description,
-      descriptionAr: r.task.descriptionAr,
-      dueDate: r.task.dueDate,
-      subject: r.subject,
-      status,
-      progress: r.progress?.progress ?? 0,
-      overdue: status !== "done" && r.task.dueDate.getTime() < now - DAY,
-      taskType: r.task.taskType,
-      attachmentName: r.task.attachmentName,
-      hasSubmission: !!r.submission,
-    };
-  });
+  return allTasks
+    .filter((t) => taskAppliesToStudent(t, { id: userId, grade: myGrade }))
+    .filter((t) => byTask.get(t.id)?.status !== "dismissed")
+    .map((t) => {
+      const p = byTask.get(t.id);
+      const status = (p?.status ?? "todo") as TaskStatus;
+      return {
+        id: t.id,
+        title: t.title,
+        titleAr: t.titleAr,
+        description: t.description,
+        descriptionAr: t.descriptionAr,
+        dueDate: t.dueDate,
+        subject: t.subject,
+        status,
+        progress: p?.progress ?? 0,
+        overdue: status !== "done" && t.dueDate.getTime() < now - DAY,
+        taskType: t.taskType,
+        attachmentName: t.attachmentName,
+        hasSubmission: submittedSet.has(t.id),
+        isPersonal: t.targetStudentId === userId,
+        hasQuiz: Boolean(t.quizQuestions && t.quizQuestions.length > 0),
+      };
+    });
 }
 
-/** Split tasks into "this week" (recent/upcoming or still open) and "archive" (older than a week and closed/missed). */
-export function splitTasks(all: TaskRow[]) {
-  const cutoff = Date.now() - 7 * DAY;
-  const week = all.filter((t) => t.dueDate.getTime() >= cutoff || t.status !== "done" && t.dueDate.getTime() >= cutoff - 7 * DAY);
-  const weekIds = new Set(week.map((t) => t.id));
-  const archive = all.filter((t) => !weekIds.has(t.id)).sort((a, b) => b.dueDate.getTime() - a.dueDate.getTime());
+/** Split tasks into "this week" (upcoming + due within last 2 days if still active) vs "archive". */
+export function splitTasks(rows: TaskRow[]) {
+  const cutoff = Date.now() - 2 * DAY;
+  const week: TaskRow[] = [];
+  const archive: TaskRow[] = [];
+  for (const r of rows) {
+    if (r.dueDate.getTime() >= cutoff) week.push(r);
+    else archive.push(r);
+  }
+  archive.reverse();
   return { week, archive };
 }
 
@@ -80,83 +109,99 @@ export type MaterialCardData = {
   thumbnailUrl: string | null;
   priceCents: number;
   isNew: boolean;
-  createdAt: Date;
+  kind: string;
+  fileSize: string;
+  fileName: string | null;
+  fileUrl: string | null;
+  storagePath: string | null;
   subject: { id: number; name: string; nameAr: string; color: string; icon: string };
-  lessonCount: number;
-  totalMinutes: number;
   purchased: boolean;
+  lessonCount: number;
   completedLessons: number;
   percent: number;
+  totalMinutes: number;
 };
+
+export async function getAllSubjects() {
+  await ensureSeeded();
+  return db.select().from(subjects).orderBy(asc(subjects.id));
+}
 
 export async function getMaterialsForUser(userId: number): Promise<MaterialCardData[]> {
   await ensureSeeded();
-  const list = await db.query.materials.findMany({
-    where: eq(materials.published, true),
-    with: {
-      subject: true,
-      lessons: { columns: { id: true, durationMinutes: true } },
-      purchases: { where: and(eq(purchases.userId, userId), eq(purchases.status, "paid")), columns: { id: true } },
-    },
-    orderBy: [desc(materials.isNew), desc(materials.createdAt)],
-  });
-  const lessonIds = list.flatMap((m) => m.lessons.map((l) => l.id));
-  const done = lessonIds.length
-    ? await db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(and(eq(lessonProgress.userId, userId), inArray(lessonProgress.lessonId, lessonIds)))
-    : [];
-  const doneSet = new Set(done.map((d) => d.lessonId));
+  const [all, owned, completed] = await Promise.all([
+    db.query.materials.findMany({
+      with: { subject: true, lessons: true },
+      orderBy: [desc(materials.isNew), asc(materials.id)],
+    }),
+    db.select({ materialId: purchases.materialId }).from(purchases).where(eq(purchases.userId, userId)),
+    db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(eq(lessonProgress.userId, userId)),
+  ]);
+  const ownedSet = new Set(owned.map((o) => o.materialId));
+  const doneSet = new Set(completed.map((c) => c.lessonId));
 
-  return list.map((m) => {
-    const completed = m.lessons.filter((l) => doneSet.has(l.id)).length;
-    return {
-      id: m.id,
-      slug: m.slug,
-      title: m.title,
-      titleAr: m.titleAr,
-      description: m.description,
-      descriptionAr: m.descriptionAr,
-      thumbnailUrl: m.thumbnailUrl,
-      priceCents: m.priceCents,
-      isNew: m.isNew,
-      createdAt: m.createdAt,
-      subject: m.subject,
-      lessonCount: m.lessons.length,
-      totalMinutes: m.lessons.reduce((a, l) => a + l.durationMinutes, 0),
-      purchased: m.purchases.length > 0,
-      completedLessons: completed,
-      percent: m.lessons.length ? Math.round((completed / m.lessons.length) * 100) : 0,
-    };
-  });
+  return all
+    .filter((m) => m.published)
+    .map((m) => {
+      const lessonCount = m.lessons.length;
+      const completedLessons = m.lessons.filter((l) => doneSet.has(l.id)).length;
+      const purchased = m.priceCents === 0 || ownedSet.has(m.id);
+      return {
+        id: m.id,
+        slug: m.slug,
+        title: m.title,
+        titleAr: m.titleAr,
+        description: m.description,
+        descriptionAr: m.descriptionAr,
+        thumbnailUrl: m.thumbnailUrl,
+        priceCents: m.priceCents,
+        isNew: m.isNew,
+        kind: m.kind,
+        fileSize: m.fileSize,
+        fileName: m.fileName,
+        fileUrl: m.fileUrl,
+        storagePath: m.storagePath,
+        subject: m.subject,
+        purchased,
+        lessonCount,
+        completedLessons,
+        percent: lessonCount ? Math.round((completedLessons / lessonCount) * 100) : 0,
+        totalMinutes: m.lessons.reduce((a, l) => a + l.durationMinutes, 0),
+      };
+    });
 }
 
 export async function getMaterialBySlug(slug: string, userId: number) {
   await ensureSeeded();
-  const [material, me] = await Promise.all([
-    db.query.materials.findFirst({
-      where: eq(materials.slug, slug),
-      with: {
-        subject: true,
-        lessons: { orderBy: [asc(lessons.position)], with: { questions: true } },
-        purchases: { where: and(eq(purchases.userId, userId), eq(purchases.status, "paid")) },
+  const m = await db.query.materials.findFirst({
+    where: eq(materials.slug, slug),
+    with: {
+      subject: true,
+      lessons: {
+        orderBy: [asc(lessons.position)],
+        with: { questions: true },
       },
-    }),
+    },
+  });
+  if (!m) return null;
+  const [owned, done, me] = await Promise.all([
+    db.query.purchases.findFirst({ where: and(eq(purchases.userId, userId), eq(purchases.materialId, m.id)) }),
+    db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(eq(lessonProgress.userId, userId)),
     db.query.users.findFirst({ where: eq(users.id, userId) }),
   ]);
-  if (!material) return null;
-  const lessonIds = material.lessons.map((l) => l.id);
-  const done = lessonIds.length
-    ? await db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(and(eq(lessonProgress.userId, userId), inArray(lessonProgress.lessonId, lessonIds)))
-    : [];
   const doneSet = new Set(done.map((d) => d.lessonId));
-  const purchased = material.purchases.length > 0 || material.priceCents === 0 || me?.role === "teacher";
-  return { ...material, purchased, doneSet };
+  const purchased = me?.role === "teacher" || m.priceCents === 0 || !!owned;
+  return { ...m, purchased, doneSet };
 }
 
 export async function recordMaterialView(userId: number, materialId: number) {
   await db
     .insert(materialViews)
     .values({ userId, materialId })
-    .onConflictDoUpdate({ target: [materialViews.userId, materialViews.materialId], set: { viewedAt: new Date() } });
+    .onConflictDoUpdate({
+      target: [materialViews.userId, materialViews.materialId],
+      set: { viewedAt: new Date() },
+    });
 }
 
 export async function getLastViewedMaterials(userId: number, limit = 4) {
@@ -232,6 +277,9 @@ export async function getDashboardData(userId: number) {
 export type TaskDetail = TaskRow & {
   isClosed: boolean;
   maxScore: number;
+  attachmentUrl: string | null;
+  attachmentStoragePath: string | null;
+  quizQuestions: TaskQuizQuestion[] | null;
   submission: {
     id: number;
     fileName: string;
@@ -245,8 +293,14 @@ export type TaskDetail = TaskRow & {
 
 export async function getTaskById(userId: number, taskId: number): Promise<TaskDetail | null> {
   await ensureSeeded();
-  const row = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId), with: { subject: true } });
-  if (!row) return null;
+  const [row, me] = await Promise.all([
+    db.query.tasks.findFirst({ where: eq(tasks.id, taskId), with: { subject: true } }),
+    db.query.users.findFirst({ where: eq(users.id, userId) }),
+  ]);
+  if (!row || !me) return null;
+  if (me.role === "student" && !taskAppliesToStudent(row, me)) {
+    return null;
+  }
   const [prog, submission] = await Promise.all([
     db.query.taskProgress.findFirst({ where: and(eq(taskProgress.taskId, taskId), eq(taskProgress.userId, userId)) }),
     db.query.taskSubmissions.findFirst({ where: and(eq(taskSubmissions.taskId, taskId), eq(taskSubmissions.userId, userId)) }),
@@ -265,7 +319,12 @@ export async function getTaskById(userId: number, taskId: number): Promise<TaskD
     overdue: status !== "done" && row.dueDate.getTime() < Date.now() - DAY,
     taskType: row.taskType,
     attachmentName: row.attachmentName,
+    attachmentUrl: row.attachmentUrl,
+    attachmentStoragePath: row.attachmentStoragePath,
+    quizQuestions: row.quizQuestions ?? null,
     hasSubmission: !!submission,
+    isPersonal: row.targetStudentId === userId,
+    hasQuiz: Boolean(row.quizQuestions && row.quizQuestions.length > 0),
     isClosed: row.status === "closed",
     maxScore: row.maxScore,
     submission: submission
@@ -282,14 +341,22 @@ export async function getTaskById(userId: number, taskId: number): Promise<TaskD
   };
 }
 
-export async function getUnreadMessageCount(userId: number) {
+export async function getUnreadMessageCount(userId: number, role = "student") {
   await ensureSeeded();
+  if (role === "teacher") {
+    const [row] = await db
+      .select({ n: sql<number>`count(*)`.mapWith(Number) })
+      .from(messages)
+      .where(and(sql`${messages.senderId} = ${messages.studentId}`, sql`${messages.readAt} is null`));
+    return row?.n ?? 0;
+  }
   const [row] = await db
     .select({ n: sql<number>`count(*)`.mapWith(Number) })
     .from(messages)
     .where(
       and(
         eq(messages.studentId, userId),
+        sql`${messages.senderId} <> ${userId}`,
         eq(messages.recipientType, "student"),
         sql`${messages.readAt} is null`,
       ),

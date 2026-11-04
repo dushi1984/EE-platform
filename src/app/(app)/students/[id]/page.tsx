@@ -4,10 +4,10 @@ import type { Metadata } from "next";
 import { requireTeacher } from "@/lib/roles";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
-import { taskTypeLabel, tt } from "@/lib/i18n-teacher";
+import { gradeLabel, taskTypeLabel, tt } from "@/lib/i18n-teacher";
 import { getStudentDetail, getStudentTrend } from "@/lib/queries-teacher";
 import { TopBar } from "@/components/shell/TopBar";
-import { Avatar, BackArrow, Badge, Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { Avatar, BackArrow, Badge, Card, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 import { StatusPill } from "@/components/teacher/StatusPill";
 import { TrendChart } from "@/components/teacher/TrendChart";
 
@@ -22,14 +22,16 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
   if (!detail) notFound();
   const { student, fullUser } = detail;
   const trend = await getStudentTrend(student.id);
-  const months = trend.map((p) => new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-GB", { month: "short" }).format(p.date));
+  const months = trend.map((p) =>
+    new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-GB", { month: "short" }).format(p.date),
+  );
 
   return (
     <>
       <TopBar title={c.navStudents} />
       <SectionTitle
         action={
-          <Link href="/students" className="text-sm font-bold text-blue-600 hover:underline">
+          <Link href="/students" className="inline-flex items-center gap-1.5 text-sm font-bold text-blue-600 hover:underline">
             <BackArrow /> {c.backToStudents}
           </Link>
         }
@@ -37,15 +39,19 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
         {c.studentProfile}
       </SectionTitle>
 
-      <div className="grid items-start gap-5 lg:grid-cols-[300px_1fr]">
+      <div className="grid items-start gap-5 lg:grid-cols-[305px_1fr]">
         <Card className="p-6 text-center">
-          <Avatar name={student.fullName} src={student.avatarUrl} size={120} className="mx-auto" />
+          <Avatar name={student.fullName} src={student.avatarUrl} size={116} className="mx-auto ring-4 ring-slate-100 dark:ring-slate-800" />
           <h1 className="mt-4 text-xl font-extrabold text-slate-900 dark:text-white">{student.fullName}</h1>
-          <p className="text-sm text-slate-500">{student.grade} · {student.studentCode}</p>
-          <div className="mt-3"><StatusPill status={student.status} locale={locale} /></div>
+          <p className="text-sm text-slate-500">
+            {gradeLabel(locale, student.grade)} · <span dir="ltr">{student.studentCode}</span>
+          </p>
+          <div className="mt-3">
+            <StatusPill status={student.status} locale={locale} />
+          </div>
           <div className="mt-5 grid grid-cols-3 gap-2">
             {[
-              [student.avgGrade ?? "—", c.avgGrades],
+              [student.avgGrade !== null ? `${student.avgGrade}%` : "—", c.avgGrades],
               [student.doneTasks, c.tasksDone],
               [student.openTasks, c.openTasks],
             ].map(([v, l]) => (
@@ -55,12 +61,27 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
               </div>
             ))}
           </div>
-          <div className="mt-5 space-y-2">
-            <Link href={`/students/${student.id}/message`} className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700">
-              <Icon name="mail" className="h-5 w-5" /> {c.message}
+
+          <div className="mt-5 space-y-2.5">
+            <Link
+              href={`/tasks/new?student=${student.id}`}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-navy-500 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-navy-600"
+            >
+              <Icon name="assign" className="h-5 w-5" />
+              {locale === "ar" ? "إسناد مهمة لهذا الطالب" : "Assign Task to Student"}
             </Link>
-            <Link href={`/tasks/new?student=${student.id}`} className="flex w-full items-center justify-center gap-2 rounded-xl border border-blue-300 px-4 py-3 text-sm font-bold text-blue-600 hover:bg-blue-50 dark:border-blue-700 dark:hover:bg-blue-500/10">
-              <Icon name="assign" className="h-5 w-5" /> {c.assignTask}
+            <Link
+              href={`/tasks/new?student=${student.id}&type=quiz`}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-bold text-white shadow-sm hover:bg-violet-700"
+            >
+              <Icon name="quiz" className="h-5 w-5" />
+              {locale === "ar" ? "إسناد اختبار قصير للطالب" : "Assign Quiz to Student"}
+            </Link>
+            <Link
+              href={`/students/${student.id}/message`}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700"
+            >
+              <Icon name="mail" className="h-5 w-5" /> {c.message}
             </Link>
           </div>
         </Card>
@@ -87,7 +108,9 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
                   <span className="font-bold text-slate-900 dark:text-white">{student.progressPct}%</span>
                 </div>
                 <ProgressBar percent={student.progressPct} className="mt-2 !h-3" />
-                <p className="mt-2 text-xs text-slate-500">{student.doneTasks}/{student.totalTasks} {c.tasksDone}</p>
+                <p className="mt-2 text-xs text-slate-500">
+                  {student.doneTasks}/{student.totalTasks} {c.tasksDone}
+                </p>
               </div>
               <div>
                 <TrendChart points={trend.map((p) => p.pct)} labels={months} empty={c.noTrend} />
@@ -97,16 +120,22 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
 
           <div className="grid gap-5 xl:grid-cols-2">
             <Card className="overflow-hidden">
-              <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">{c.recentGrades}</h2>
+              <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
+                {c.recentGrades}
+              </h2>
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                {detail.recentGrades.length === 0 && <li className="p-6 text-center text-sm text-slate-500">{c.noRecentGrades}</li>}
+                {detail.recentGrades.length === 0 && (
+                  <li className="p-6 text-center text-sm text-slate-500">{c.noRecentGrades}</li>
+                )}
                 {detail.recentGrades.map((g) => {
                   const pct = Math.round((g.score / g.maxScore) * 100);
                   return (
                     <li key={g.id} className="flex items-center gap-3 px-5 py-3">
-                      <span className="text-xl">{g.subject.icon}</span>
+                      <SubjectBadge icon={g.subject.icon} name={g.subject.name} size="sm" />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">{tr(locale, g.title, g.titleAr)}</p>
+                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                          {tr(locale, g.title, g.titleAr)}
+                        </p>
                         <p className="text-xs text-slate-500">{fmtDate(locale, g.gradedAt)}</p>
                       </div>
                       <span className={`font-extrabold ${pct >= 70 ? "text-green-600" : "text-red-500"}`}>{pct}%</span>
@@ -117,17 +146,43 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
             </Card>
 
             <Card className="overflow-hidden">
-              <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">{c.recentTasks}</h2>
+              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">{c.recentTasks}</h2>
+                <Link href={`/tasks/new?student=${student.id}`} className="text-xs font-bold text-blue-600 hover:underline dark:text-sky-400">
+                  + {c.assignTask}
+                </Link>
+              </div>
               <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                {detail.recentTasks.length === 0 && <li className="p-6 text-center text-sm text-slate-500">{c.noRecentTasks}</li>}
-                {detail.recentTasks.map(({ task, progress, submission }) => (
+                {detail.recentTasks.length === 0 && (
+                  <li className="p-6 text-center text-sm text-slate-500">{c.noRecentTasks}</li>
+                )}
+                {detail.recentTasks.map(({ task, progress, submission, isPersonal }) => (
                   <li key={task.id} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="min-w-0">
-                      <p className="truncate text-sm font-bold text-slate-900 dark:text-white">{tr(locale, task.title, task.titleAr)}</p>
-                      <p className="text-xs text-slate-500">{taskTypeLabel(locale, task.taskType)} · {fmtDate(locale, task.dueDate)}</p>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                          {tr(locale, task.title, task.titleAr)}
+                        </p>
+                        {isPersonal && (
+                          <Badge tone="personal">{locale === "ar" ? "خاص" : "Personal"}</Badge>
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-500">
+                        {taskTypeLabel(locale, task.taskType)} · {fmtDate(locale, task.dueDate)}
+                      </p>
                     </div>
-                    <Badge tone={submission?.score !== null && submission?.score !== undefined ? "done" : progress?.status === "done" ? "in_progress" : "todo"}>
-                      {submission?.score !== null && submission?.score !== undefined ? `${submission.score}/${task.maxScore}` : progress?.status ?? "todo"}
+                    <Badge
+                      tone={
+                        submission?.score !== null && submission?.score !== undefined
+                          ? "done"
+                          : progress?.status === "done"
+                            ? "in_progress"
+                            : "todo"
+                      }
+                    >
+                      {submission?.score !== null && submission?.score !== undefined
+                        ? `${submission.score}/${task.maxScore}`
+                        : progress?.status ?? "todo"}
                     </Badge>
                   </li>
                 ))}
@@ -144,7 +199,9 @@ function Info({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl bg-slate-100 px-4 py-3 dark:bg-slate-800">
       <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="mt-1 break-all font-semibold text-slate-900 dark:text-white" dir="auto">{value}</dd>
+      <dd className="mt-1 break-all font-semibold text-slate-900 dark:text-white" dir="auto">
+        {value}
+      </dd>
     </div>
   );
 }

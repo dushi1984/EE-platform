@@ -131,20 +131,22 @@ export function VideoPlayer({
           <button
             type="button"
             onClick={() => setMode("embed")}
-            className={`rounded-lg px-3 py-1 font-semibold transition ${
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 font-semibold transition ${
               mode === "embed" ? "bg-navy-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300"
             }`}
           >
-            🎬 Video Lecture
+            <Icon name="video" className="h-3.5 w-3.5" />
+            Video Lecture
           </button>
           <button
             type="button"
             onClick={() => setMode("studio")}
-            className={`rounded-lg px-3 py-1 font-semibold transition ${
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 font-semibold transition ${
               mode === "studio" ? "bg-navy-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300"
             }`}
           >
-            🖥️ Interactive Studio Player
+            <Icon name="play" className="h-3.5 w-3.5" />
+            Interactive Studio Player
           </button>
         </div>
       )}
@@ -216,7 +218,7 @@ export function VideoPlayer({
                   aria-label={muted ? "Unmute" : "Mute"}
                   className="text-white/85 hover:text-white"
                 >
-                  {muted ? "🔇" : "🔊"}
+                  <Icon name={muted ? "volume-mute" : "volume"} className="h-4.5 w-4.5" />
                 </button>
 
                 <div className="flex items-center gap-5">
@@ -226,7 +228,7 @@ export function VideoPlayer({
                     aria-label="Rewind"
                     className="text-white/85 hover:text-white"
                   >
-                    ⏮
+                    <Icon name="rewind" className="h-4.5 w-4.5" />
                   </button>
                   <button
                     type="button"
@@ -237,15 +239,15 @@ export function VideoPlayer({
                     aria-label="Stop"
                     className="text-white/85 hover:text-white"
                   >
-                    ⏹
+                    <Icon name="stop" className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => setPlaying((p) => !p)}
                     aria-label={playing ? "Pause" : "Play"}
-                    className="rounded-lg bg-white/15 px-3 py-1 font-bold text-white hover:bg-white/25"
+                    className="rounded-lg bg-white/15 px-3 py-1.5 font-bold text-white hover:bg-white/25"
                   >
-                    {playing ? "⏸" : "▶"}
+                    <Icon name={playing ? "pause" : "play"} className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
@@ -253,7 +255,7 @@ export function VideoPlayer({
                     aria-label="Fast forward"
                     className="text-white/85 hover:text-white"
                   >
-                    ⏭
+                    <Icon name="fast-forward" className="h-4.5 w-4.5" />
                   </button>
                 </div>
 
@@ -263,7 +265,7 @@ export function VideoPlayer({
                   aria-label="Fullscreen"
                   className="text-white/85 hover:text-white"
                 >
-                  ⛶
+                  <Icon name="maximize" className="h-4.5 w-4.5" />
                 </button>
               </div>
             </div>

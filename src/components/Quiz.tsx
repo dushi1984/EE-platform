@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useI18n } from "@/lib/i18n-client";
 import { submitQuizAction, type QuizResult } from "@/lib/actions";
 import type { QuizQuestion } from "@/db/schema";
+import { Icon } from "@/components/ui";
 
 export function Quiz({ lessonId, questions }: { lessonId: number; questions: QuizQuestion[] }) {
   const { t } = useI18n();
@@ -60,8 +61,9 @@ export function Quiz({ lessonId, questions }: { lessonId: number; questions: Qui
             {pending ? t("quiz.checking") : t("quiz.check")}
           </button>
         ) : (
-          <div className={`flex flex-wrap items-center gap-3 rounded-xl px-4 py-3 text-sm ${perfect ? "bg-green-50 text-green-800 dark:bg-green-500/10 dark:text-green-200" : "bg-yellow-50 text-yellow-800 dark:bg-yellow-500/10 dark:text-yellow-200"}`}>
-            {perfect ? `🎉 ${t("quiz.perfect")}` : t("quiz.notPerfect")}
+          <div className={`flex flex-wrap items-center gap-2 rounded-xl px-4 py-3 text-sm ${perfect ? "bg-green-50 text-green-800 dark:bg-green-500/10 dark:text-green-200" : "bg-yellow-50 text-yellow-800 dark:bg-yellow-500/10 dark:text-yellow-200"}`}>
+            {perfect && <Icon name="trophy" className="h-4.5 w-4.5" />}
+            <span>{perfect ? t("quiz.perfect") : t("quiz.notPerfect")}</span>
             {!perfect && (
               <button type="button" onClick={() => window.location.reload()} className="font-semibold underline">
                 {t("quiz.retry")}

@@ -5,10 +5,12 @@ import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtMoney, tr } from "@/lib/i18n";
 import { getMaterialBySlug, recordMaterialView } from "@/lib/queries";
+import { parseGoogleDriveUrl } from "@/lib/storage";
 import { PurchaseButton } from "@/components/PurchaseModal";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { Badge, Card, ForwardArrow, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 import { MaterialThumb } from "@/components/MaterialCard";
+import { DownloadButton } from "@/components/TaskSubmissionForm";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
@@ -47,8 +49,9 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
             {material.isNew && !material.purchased && <Badge tone="new" className="absolute start-3 top-3 shadow">{t("materials.newBadge")}</Badge>}
           </div>
           <div className="flex flex-col p-6">
-            <p className="text-sm font-semibold text-navy-500 dark:text-sky-300">
-              {material.subject.icon} {tr(locale, material.subject.name, material.subject.nameAr)}
+            <p className="inline-flex items-center gap-2 text-sm font-semibold text-navy-500 dark:text-sky-300">
+              <SubjectBadge icon={material.subject.icon} name={material.subject.name} size="xs" />
+              <span>{tr(locale, material.subject.name, material.subject.nameAr)}</span>
             </p>
             <h2 className="mt-1 text-3xl font-bold tracking-tight text-slate-900 dark:text-white">{title}</h2>
             <p className="mt-3 leading-relaxed text-slate-700 dark:text-slate-300">{tr(locale, material.description, material.descriptionAr)}</p>
@@ -82,12 +85,31 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
                     </div>
                     <ProgressBar percent={percent} />
                   </div>
+                  {(material.storagePath || material.fileUrl) && (
+                    parseGoogleDriveUrl(material.fileUrl) ? (
+                      <a
+                        href={parseGoogleDriveUrl(material.fileUrl)!.viewUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-xs font-bold text-navy-700 shadow-xs hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-sky-300"
+                      >
+                        <Icon name="drive" className="h-4 w-4" />
+                        {locale === "ar" ? "فتح في Google Drive" : "Open in Drive"}
+                      </a>
+                    ) : (
+                      <DownloadButton
+                        url={`/api/materials/${material.id}/file`}
+                        label={locale === "ar" ? "تحميل المستند" : "Download File"}
+                      />
+                    )
+                  )}
                   {percent === 100 && (
                     <Link
                       href={`/materials/${material.slug}/certificate`}
                       className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-extrabold text-white shadow-md transition hover:opacity-90"
                     >
-                      🏆 {locale === "ar" ? "شهادة الإتمام" : "Certificate"}
+                      <Icon name="trophy" className="h-4.5 w-4.5" />
+                      {locale === "ar" ? "شهادة الإتمام" : "Certificate"}
                     </Link>
                   )}
                 </>

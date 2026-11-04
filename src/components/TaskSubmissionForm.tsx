@@ -1,205 +1,238 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n-client";
-import { MAX_FILE_BYTES, formatBytes } from "@/lib/file-client";
-import { Icon } from "@/components/ui";
-import { reloadWithSession } from "@/components/shell/Shell";
-
-type Phase = "idle" | "uploading" | "done" | "error";
-
-function resolveSessionToken(): string {
-  if (typeof window === "undefined") return "";
-  const params = new URLSearchParams(window.location.search);
-  return (
-    params.get("session") ||
-    localStorage.getItem("insci_session") ||
-    sessionStorage.getItem("insci_session") ||
-    ""
-  );
-}
+import {
+  formatBytes,
+  getClientSessionToken,
+  GOOGLE_DRIVE_FOLDER_URL,
+  MAX_FILE_BYTES,
+  uploadFileToCloudBucket,
+} from "@/lib/file-client";
+import { Icon } from "./ui";
+import { reloadWithSession } from "./shell/Shell";
 
 export function SubmissionForm({ taskId }: { taskId: number }) {
-  const { t } = useI18n();
-  const [file, setFile] = useState<File | null>(null);
-  const [note, setNote] = useState("");
-  const [fileError, setFileError] = useState("");
-  const [phase, setPhase] = useState<Phase>("idle");
-  const [progress, setProgress] = useState(0);
-  const [errorMsg, setErrorMsg] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const { t, locale } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
-  const xhrRef = useRef<XMLHttpRequest | null>(null);
+  const [mode, setMode] = useState<"supabase" | "drive">("supabase");
+  const [file, setFile] = useState<File | null>(null);
+  const [driveUrl, setDriveUrl] = useState("");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const [pending, setPending] = useState(false);
 
-  useEffect(() => () => xhrRef.current?.abort(), []);
-
-  function pick(f: File | undefined) {
-    setFileError("");
-    setErrorMsg("");
-    setPhase("idle");
-    if (!f) return;
-    if (f.size > MAX_FILE_BYTES) {
-      setFile(null);
-      setFileError(t("tasks.fileTooBig"));
+  const pickFile = (picked?: File) => {
+    setError("");
+    setSaved(false);
+    if (!picked) return;
+    if (picked.size > MAX_FILE_BYTES) {
+      setError(t("tasks.fileTooBig"));
       return;
     }
-    setFile(f);
-  }
+    setFile(picked);
+  };
 
-  function attachSampleWorksheet() {
-    setFileError("");
-    const body = [
-      "in science — Completed Student Worksheet",
-      `Task ID: ${taskId}`,
-      `Submitted: ${new Date().toLocaleString()}`,
-      "----------------------------------------",
-      "Answer 1: Completed all calculations and verified units.",
-      "Answer 2: Labeled all diagrams and balanced equations.",
-      "Answer 3: Summary conclusion written in the notes.",
-    ].join("\n");
-    setFile(new File([body], `task-${taskId}-completed-worksheet.txt`, { type: "text/plain" }));
-  }
+  const canSubmit =
+    Boolean(mode === "supabase" ? file : driveUrl.trim()) || Boolean(note.trim());
 
-  function upload() {
-    if (!file && !note.trim()) return;
-    setPhase("uploading");
-    setProgress(0);
-    setErrorMsg("");
+  const submit = async () => {
+    if (!canSubmit || pending) return;
+    setError("");
+    setSaved(false);
+    setPending(true);
+    try {
+      const form = new FormData();
+      form.set("note", note);
 
-    const form = new FormData();
-    if (file) form.append("file", file);
-    form.append("note", note.trim());
-
-    const xhr = new XMLHttpRequest();
-    xhrRef.current = xhr;
-    xhr.open("POST", `/api/tasks/${taskId}/submission`);
-    const token = resolveSessionToken();
-    if (token) xhr.setRequestHeader("x-session-token", token);
-
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
-    };
-    xhr.onload = () => {
-      try {
-        const data = JSON.parse(xhr.responseText || "{}");
-        if (xhr.status >= 200 && xhr.status < 300 && data.ok) {
-          setPhase("done");
-          setProgress(100);
-          setTimeout(() => reloadWithSession(), 700);
-          return;
+      if (mode === "supabase" && file) {
+        const uploaded = await uploadFileToCloudBucket("submissions", file);
+        if (uploaded) {
+          form.set("storagePath", uploaded.storagePath);
+          form.set("fileName", uploaded.fileName);
+          form.set("mimeType", uploaded.mimeType);
+        } else {
+          form.set("file", file);
         }
-        if (data.error === "file_too_big") setErrorMsg(t("tasks.fileTooBig"));
-        else if (xhr.status === 401) setErrorMsg(t("errors.invalidCredentials"));
-        else setErrorMsg(t("common.errorGeneric"));
-      } catch {
-        setErrorMsg(t("common.errorGeneric"));
+      } else if (mode === "drive" && driveUrl.trim()) {
+        form.set("fileUrl", driveUrl.trim());
+        form.set("fileName", "Google Drive Submission");
       }
-      setPhase("error");
-    };
-    xhr.onerror = () => {
-      setErrorMsg(t("common.errorGeneric"));
-      setPhase("error");
-    };
-    xhr.onabort = () => setPhase("idle");
-    xhr.send(form);
-  }
 
-  const canSubmit = Boolean(file || note.trim()) && phase !== "uploading" && phase !== "done";
+      const token = getClientSessionToken();
+      const res = await fetch(`/api/tasks/${taskId}/submission`, {
+        method: "POST",
+        body: form,
+        headers: token ? { "x-session-token": token } : undefined,
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data?.ok) {
+        setError(data?.error === "file_too_big" ? t("tasks.fileTooBig") : t("common.errorGeneric"));
+        setPending(false);
+        return;
+      }
+      setSaved(true);
+      setFile(null);
+      setDriveUrl("");
+      setTimeout(() => reloadWithSession(), 650);
+    } catch {
+      setError(t("common.errorGeneric"));
+      setPending(false);
+    }
+  };
 
   return (
-    <div className="space-y-3">
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          pick(e.dataTransfer.files?.[0]);
-        }}
-        className={`flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed px-6 py-8 text-center transition ${
-          dragging
-            ? "border-blue-500 bg-blue-50 dark:bg-blue-500/10"
-            : "border-slate-300 bg-slate-50/50 hover:border-blue-400 hover:bg-blue-50/50 dark:border-slate-700 dark:bg-slate-800/40 dark:hover:border-blue-500"
-        }`}
-      >
-        <input ref={inputRef} type="file" className="hidden" onChange={(e) => pick(e.target.files?.[0])} />
-        <span className="grid h-14 w-14 place-items-center rounded-full bg-slate-200 text-slate-500 dark:bg-slate-700 dark:text-slate-300">
-          <Icon name="upload" className="h-7 w-7" />
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">
+          {locale === "ar" ? "طريقة رفع الحل" : "Submission Storage"}
         </span>
-        <span className="text-lg font-bold text-slate-900 dark:text-white">
-          {file ? file.name : t("tasks.noSubmission")}
-        </span>
-        <span className="text-sm text-slate-500">
-          {file
-            ? `${formatBytes(file.size)} / ${formatBytes(MAX_FILE_BYTES)}`
-            : t("tasks.uploadHint")}
-        </span>
-        <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
+        <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
           <button
             type="button"
-            onClick={() => inputRef.current?.click()}
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-500 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-blue-600"
+            onClick={() => setMode("supabase")}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+              mode === "supabase"
+                ? "bg-white text-navy-700 shadow-xs dark:bg-slate-900 dark:text-sky-300"
+                : "text-slate-600 dark:text-slate-400"
+            }`}
           >
-            <Icon name="file" className="h-4 w-4" />
-            {t("tasks.uploadFile")}
+            <Icon name="cloud" className="h-4 w-4" />
+            {locale === "ar" ? "رفع ملف (PDF / DOC / صورة)" : "Upload File (PDF / DOC / Image)"}
           </button>
           <button
             type="button"
-            onClick={attachSampleWorksheet}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
+            onClick={() => setMode("drive")}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+              mode === "drive"
+                ? "bg-white text-navy-700 shadow-xs dark:bg-slate-900 dark:text-sky-300"
+                : "text-slate-600 dark:text-slate-400"
+            }`}
           >
-            📄 {t("common.attachSample")}
+            <Icon name="drive" className="h-4 w-4" />
+            Google Drive
           </button>
         </div>
       </div>
-      {fileError && <p className="text-sm font-semibold text-red-600">{fileError}</p>}
-      <textarea
-        rows={3}
-        value={note}
-        onChange={(e) => setNote(e.target.value)}
-        placeholder={t("tasks.notePlaceholder")}
-        className="w-full rounded-xl border border-slate-300 bg-transparent px-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:text-white"
-      />
-      {phase === "uploading" && (
-        <div aria-live="polite">
-          <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-            <div
-              className="h-full rounded-full bg-blue-500 transition-all duration-200"
-              style={{ width: `${progress}%` }}
-            />
+
+      {mode === "supabase" ? (
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            pickFile(e.dataTransfer.files[0]);
+          }}
+          className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 px-6 py-8 text-center transition hover:border-navy-400 dark:border-slate-700 dark:bg-slate-800/40"
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,image/*"
+            className="hidden"
+            onChange={(e) => pickFile(e.target.files?.[0])}
+          />
+          {file ? (
+            <div className="space-y-2">
+              <div className="mx-auto grid h-12 w-12 place-items-center rounded-2xl bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                <Icon name="check" className="h-6 w-6" />
+              </div>
+              <p className="font-bold text-slate-900 dark:text-white">{file.name}</p>
+              <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
+              <button
+                type="button"
+                onClick={() => inputRef.current?.click()}
+                className="text-xs font-semibold text-navy-500 hover:underline dark:text-sky-400"
+              >
+                {t("common.change")}
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-navy-500/10 text-navy-600 dark:bg-white/10 dark:text-sky-300">
+                <Icon name="upload" className="h-6 w-6" />
+              </div>
+              <p className="text-sm font-medium text-slate-600 dark:text-slate-300">{t("tasks.uploadHint")}</p>
+              <p className="mt-1 text-xs text-slate-400">
+                {locale === "ar" ? "PDF أو DOC أو صورة حتى 25 ميجابايت" : "PDF, DOC, DOCX, or image up to 25 MB"}
+              </p>
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => inputRef.current?.click()}
+                  className="rounded-xl bg-navy-500 px-5 py-2.5 text-sm font-bold text-white shadow hover:bg-navy-600"
+                >
+                  {t("tasks.uploadFile")}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+              {locale === "ar"
+                ? "الصق رابط ملفك على Google Drive (PDF أو Google Docs)"
+                : "Paste your Google Drive file or Google Docs link"}
+            </p>
+            <a
+              href={GOOGLE_DRIVE_FOLDER_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-navy-700 shadow-xs ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-sky-300 dark:ring-slate-700"
+            >
+              <Icon name="drive" className="h-4 w-4" />
+              {locale === "ar" ? "فتح مجلد Google Drive" : "Open Drive Folder"}
+            </a>
           </div>
-          <p className="mt-1.5 text-center text-xs font-semibold text-slate-500">
-            {t("tasks.uploading")} {progress}%
-          </p>
+          <input
+            type="url"
+            value={driveUrl}
+            onChange={(e) => setDriveUrl(e.target.value)}
+            placeholder="https://drive.google.com/file/d/..."
+            dir="ltr"
+            className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-navy-500 dark:border-slate-700 dark:bg-slate-900"
+          />
         </div>
       )}
-      {phase === "done" && (
-        <p className="rounded-xl bg-green-50 px-4 py-2.5 text-sm font-semibold text-green-700 dark:bg-green-500/10 dark:text-green-300">
+
+      <div>
+        <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {locale === "ar" ? "ملاحظاتك أو إجابتك المكتوبة" : "Written Answer / Notes"}
+        </label>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={3}
+          placeholder={t("tasks.notePlaceholder")}
+          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm outline-none focus:border-navy-500 focus:bg-white dark:border-slate-700 dark:bg-slate-800"
+        />
+      </div>
+
+      {error && (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700 dark:bg-red-500/10 dark:text-red-300">
+          <span>{error}</span>
+          {canSubmit && (
+            <button type="button" onClick={submit} className="rounded-lg bg-red-600 px-3 py-1 text-xs font-bold text-white hover:bg-red-700">
+              {t("common.retry")}
+            </button>
+          )}
+        </div>
+      )}
+      {saved && (
+        <p role="status" className="rounded-xl bg-green-50 px-4 py-2.5 text-sm font-medium text-green-700 dark:bg-green-500/10 dark:text-green-300">
           {t("tasks.submissionSaved")}
         </p>
       )}
-      {phase === "error" && (
-        <div className="rounded-xl bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300">
-          <p>{errorMsg}</p>
-          <button
-            type="button"
-            onClick={upload}
-            className="mt-1 font-bold underline underline-offset-2"
-          >
-            {t("common.retry")}
-          </button>
-        </div>
-      )}
+
       <button
         type="button"
-        onClick={upload}
-        disabled={!canSubmit}
-        className="w-full rounded-xl bg-navy-500 py-3 text-sm font-bold text-white shadow hover:bg-navy-600 disabled:opacity-50"
+        disabled={!canSubmit || pending}
+        onClick={submit}
+        className="w-full rounded-xl bg-green-600 py-3 font-bold text-white shadow-lg shadow-green-600/20 hover:bg-green-700 disabled:opacity-40 sm:w-auto sm:px-8"
       >
-        {phase === "uploading" ? t("tasks.uploading") : t("tasks.submitWork")}
+        {pending ? t("tasks.uploading") : t("tasks.submitWork")}
       </button>
     </div>
   );
@@ -207,59 +240,68 @@ export function SubmissionForm({ taskId }: { taskId: number }) {
 
 export function RemoveSubmissionButton({ taskId }: { taskId: number }) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState(false);
 
-  async function remove() {
-    if (busy) return;
-    setBusy(true);
+  const remove = async () => {
+    setPending(true);
     try {
-      const token = resolveSessionToken();
-      const res = await fetch(`/api/tasks/${taskId}/submission`, {
+      const token = getClientSessionToken();
+      await fetch(`/api/tasks/${taskId}/submission`, {
         method: "DELETE",
         headers: token ? { "x-session-token": token } : undefined,
       });
-      if (res.ok) reloadWithSession();
+      reloadWithSession();
     } catch {
-      setBusy(false);
+      setPending(false);
     }
-  }
+  };
 
   return (
     <button
       type="button"
+      disabled={pending}
       onClick={remove}
-      disabled={busy}
-      className="rounded-lg px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50 dark:hover:bg-red-500/10"
+      className="text-xs font-semibold text-red-600 hover:underline disabled:opacity-50 dark:text-red-400"
     >
-      {busy ? "…" : t("tasks.removeSubmission")}
+      {t("tasks.removeSubmission")}
     </button>
   );
 }
 
-export function DownloadButton({ url, label, compact = false }: { url: string; label: string; compact?: boolean }) {
-  const [busy, setBusy] = useState(false);
+export function DownloadButton({
+  url,
+  label,
+  compact = false,
+}: {
+  url: string;
+  label: string;
+  compact?: boolean;
+}) {
+  const [pending, setPending] = useState(false);
 
-  const go = async () => {
-    if (busy) return;
-    setBusy(true);
+  const download = async () => {
+    if (pending) return;
+    setPending(true);
     try {
-      const token = resolveSessionToken();
-      const res = await fetch(url, { headers: token ? { "x-session-token": token } : {} });
+      const token = getClientSessionToken();
+      const res = await fetch(url, {
+        headers: token ? { "x-session-token": token } : undefined,
+      });
       if (!res.ok) throw new Error("download failed");
       const blob = await res.blob();
-      const disp = res.headers.get("content-disposition") || "";
-      const m = /filename="([^"]+)"/.exec(disp);
+      const disp = res.headers.get("content-disposition") ?? "";
+      const match = disp.match(/filename="?([^";]+)"?/i);
+      const filename = match?.[1] || "download";
+      const objectUrl = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = m?.[1] ?? "download";
+      a.href = objectUrl;
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    } catch {
-      // ignore
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } finally {
-      setBusy(false);
+      setPending(false);
     }
   };
 
@@ -267,13 +309,12 @@ export function DownloadButton({ url, label, compact = false }: { url: string; l
     return (
       <button
         type="button"
-        onClick={go}
-        disabled={busy}
+        onClick={download}
+        disabled={pending}
         aria-label={label || "Download"}
-        title={label || "Download"}
-        className="grid h-8 w-8 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-blue-600 disabled:opacity-50 dark:hover:bg-slate-800"
+        className="grid h-8 w-8 place-items-center rounded-lg text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:hover:bg-slate-800"
       >
-        <Icon name="download" className="h-5 w-5" />
+        <Icon name="download" className="h-4 w-4" />
       </button>
     );
   }
@@ -281,12 +322,12 @@ export function DownloadButton({ url, label, compact = false }: { url: string; l
   return (
     <button
       type="button"
-      onClick={go}
-      disabled={busy}
-      className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-1.5 text-sm font-semibold text-blue-600 transition hover:bg-slate-200 disabled:opacity-60 dark:bg-slate-800 dark:text-blue-400"
+      onClick={download}
+      disabled={pending}
+      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-navy-500 px-3.5 py-2 text-xs font-bold text-white hover:bg-navy-600 disabled:opacity-60"
     >
       <Icon name="download" className="h-4 w-4" />
-      {label}
+      {pending ? "…" : label}
     </button>
   );
 }

@@ -1,40 +1,92 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useI18n } from "@/lib/i18n-client";
-import { TASK_TYPES, taskTypeLabel, tt } from "@/lib/i18n-teacher";
-import { MAX_FILE_BYTES, formatBytes, getClientSessionToken } from "@/lib/file-client";
-import { Icon } from "@/components/ui";
+import {
+  formatBytes,
+  getClientSessionToken,
+  GOOGLE_DRIVE_FOLDER_URL,
+  MAX_FILE_BYTES,
+  uploadFileToCloudBucket,
+} from "@/lib/file-client";
+import { gradeLabel, TASK_TYPES, taskTypeLabel, tt } from "@/lib/i18n-teacher";
+import { Avatar, Icon } from "@/components/ui";
 import { navigateWithSession } from "@/components/shell/Shell";
 
-const input =
-  "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-950 dark:text-white";
-const label = "mb-1.5 block text-sm font-bold text-slate-900 dark:text-white";
-
-type LevelOpt = { id: number; name: string; nameAr: string };
+type SubjectOpt = { id: number; name: string; nameAr: string; icon: string };
 type TermOpt = { id: number; name: string; nameAr: string; isActive: boolean };
+type StudentOpt = { id: number; fullName: string; studentCode: string; grade: string };
+
+type DraftQuizQuestion = {
+  question: string;
+  options: [string, string, string, string];
+  correctIndex: number;
+  explanation: string;
+};
+
+const emptyQuestion = (): DraftQuizQuestion => ({
+  question: "",
+  options: ["", "", "", ""],
+  correctIndex: 0,
+  explanation: "",
+});
 
 export function AssignTaskForm({
   subjects,
-  defaultAudience,
-  levels,
+  grades,
+  students,
+  targetStudent,
   terms,
+  defaultAudience,
+  defaultTaskType = "",
 }: {
-  subjects: { id: number; name: string; nameAr: string; icon: string }[];
-  defaultAudience: string;
-  levels: LevelOpt[];
+  subjects: SubjectOpt[];
+  grades: string[];
+  students: StudentOpt[];
+  targetStudent?: StudentOpt | null;
   terms: TermOpt[];
+  defaultAudience: string;
+  defaultTaskType?: string;
 }) {
   const { locale } = useI18n();
   const c = tt(locale);
-  const [file, setFile] = useState<File | null>(null);
-  const [fileError, setFileError] = useState("");
-  const [error, setError] = useState("");
-  const [pending, setPending] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const activeTerm = terms.find((tm) => tm.isActive) ?? terms[0] ?? null;
 
-  function onFile(f: File | undefined) {
+  const [audience, setAudience] = useState(defaultAudience);
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [taskType, setTaskType] = useState(defaultTaskType);
+  const [subjectId, setSubjectId] = useState(subjects[0]?.id ?? 1);
+  const [maxScore, setMaxScore] = useState(100);
+  const [dueDate, setDueDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 7);
+    return d.toISOString().slice(0, 10);
+  });
+
+  // Cloud storage / Google Drive state
+  const [storageMode, setStorageMode] = useState<"supabase" | "drive">("supabase");
+  const [file, setFile] = useState<File | null>(null);
+  const [driveUrl, setDriveUrl] = useState("");
+  const [driveFileName, setDriveFileName] = useState("");
+  const [fileError, setFileError] = useState("");
+
+  // Interactive Quiz Builder state (used when taskType === "quiz")
+  const [questions, setQuestions] = useState<DraftQuizQuestion[]>([emptyQuestion()]);
+
+  const [formError, setFormError] = useState("");
+  const [pending, setPending] = useState(false);
+  const [statusNote, setStatusNote] = useState("");
+
+  const selectedStudent = useMemo(() => {
+    if (!audience.startsWith("student:")) return null;
+    const id = Number(audience.slice("student:".length));
+    return students.find((s) => s.id === id) ?? targetStudent ?? null;
+  }, [audience, students, targetStudent]);
+
+  function onFile(f?: File) {
     setFileError("");
     if (!f) return;
     if (f.size > MAX_FILE_BYTES) {
@@ -44,13 +96,80 @@ export function AssignTaskForm({
     setFile(f);
   }
 
+  function updateQuestion(idx: number, patch: Partial<DraftQuizQuestion>) {
+    setQuestions((prev) => prev.map((q, i) => (i === idx ? { ...q, ...patch } : q)));
+  }
+
+  function updateOption(qIdx: number, optIdx: 0 | 1 | 2 | 3, val: string) {
+    setQuestions((prev) =>
+      prev.map((q, i) => {
+        if (i !== qIdx) return q;
+        const next: [string, string, string, string] = [...q.options] as [string, string, string, string];
+        next[optIdx] = val;
+        return { ...q, options: next };
+      }),
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError("");
-    const out = new FormData(e.currentTarget);
-    if (file) out.set("file", file);
+    setFormError("");
+    if (title.trim().length < 3) {
+      setFormError(c.taskTitleShort);
+      return;
+    }
+    if (!taskType) {
+      setFormError(c.typeRequired);
+      return;
+    }
+    if (!dueDate) {
+      setFormError(c.dueRequired);
+      return;
+    }
+
+    const validQuizQuestions =
+      taskType === "quiz"
+        ? questions
+            .map((q) => ({
+              question: q.question.trim(),
+              options: q.options.map((o) => o.trim()).filter(Boolean),
+              correctIndex: q.correctIndex,
+              explanation: q.explanation.trim(),
+            }))
+            .filter((q) => q.question.length >= 2 && q.options.length >= 2)
+        : [];
+
     setPending(true);
     try {
+      const out = new FormData(e.currentTarget);
+      out.set("audience", audience);
+      out.set("title", title.trim());
+      out.set("description", description.trim());
+      out.set("taskType", taskType);
+      out.set("subjectId", String(subjectId));
+      out.set("dueDate", dueDate);
+      out.set("maxScore", String(maxScore));
+
+      if (validQuizQuestions.length > 0) {
+        out.set("quizQuestions", JSON.stringify(validQuizQuestions));
+      }
+
+      if (storageMode === "supabase" && file) {
+        setStatusNote(locale === "ar" ? "جارٍ رفع الملف إلى سحابة Supabase (files)…" : "Uploading file to Supabase files bucket…");
+        const uploaded = await uploadFileToCloudBucket("tasks", file);
+        if (uploaded) {
+          out.set("storagePath", uploaded.storagePath);
+          out.set("attachmentName", uploaded.fileName);
+          out.set("attachmentMime", uploaded.mimeType);
+        } else {
+          out.set("file", file);
+        }
+      } else if (storageMode === "drive" && driveUrl.trim()) {
+        out.set("attachmentUrl", driveUrl.trim());
+        out.set("attachmentName", driveFileName.trim() || "Google Drive Document");
+      }
+
+      setStatusNote(c.assigning);
       const token = getClientSessionToken();
       const res = await fetch("/api/tasks/assign", {
         method: "POST",
@@ -58,147 +177,456 @@ export function AssignTaskForm({
         headers: token ? { "x-session-token": token } : undefined,
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok || !data?.ok) throw new Error("assign failed");
-      navigateWithSession(`/tasks?task=${data.taskId}`);
+      if (!res.ok || !data?.ok) {
+        setFormError(
+          data?.error === "file_too_big"
+            ? c.fileTooBig
+            : locale === "ar"
+              ? "تعذر إسناد المهمة. حاول مرة أخرى."
+              : "Could not assign task. Please try again.",
+        );
+        setPending(false);
+        setStatusNote("");
+        return;
+      }
+
+      if (data.targetStudentId) {
+        navigateWithSession(`/students/${data.targetStudentId}`);
+      } else {
+        navigateWithSession(`/tasks?task=${data.taskId}`);
+      }
     } catch {
-      setError(locale === "ar" ? "تعذر إسناد المهمة. حاول مرة أخرى." : "Could not assign the task. Please try again.");
+      setFormError(locale === "ar" ? "انقطع الاتصال. حاول مرة أخرى." : "Network error. Please try again.");
       setPending(false);
+      setStatusNote("");
     }
   }
 
-  function attachTemplateWorksheet() {
-    setFileError("");
-    const content = [
-      "in science — Student Practice Worksheet",
-      "=======================================",
-      "Instructions: Show all steps, formulas, and units clearly.",
-      "",
-      "Question 1: Define the key principle and state its SI unit.",
-      "Question 2: Solve the numerical problem and verify significant figures.",
-      "Question 3: Sketch and label the diagram.",
-    ].join("\n");
-    setFile(new File([content], "practice-worksheet.txt", { type: "text/plain" }));
-  }
+  const label = "mb-2 block text-base font-bold text-slate-900 dark:text-white";
+  const field =
+    "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm text-slate-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-white";
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 p-5 sm:p-6">
+    <form onSubmit={handleSubmit} className="space-y-6 p-5 sm:p-8">
+      {/* Personal student callout banner */}
+      {selectedStudent && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 via-sky-50 to-amber-50 p-4 dark:border-violet-500/30 dark:from-violet-500/15 dark:via-slate-800 dark:to-sky-500/10">
+          <div className="flex items-center gap-3">
+            <Avatar name={selectedStudent.fullName} size={44} />
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-violet-700 dark:text-violet-300">
+                {locale === "ar" ? "إسناد شخصي لطالب محدد" : "Personal Assignment for Specific Student"}
+              </p>
+              <p className="text-base font-extrabold text-slate-900 dark:text-white">
+                {selectedStudent.fullName}{" "}
+                <span className="text-xs font-semibold text-slate-500" dir="ltr">
+                  (#{selectedStudent.studentCode} · {gradeLabel(locale, selectedStudent.grade)})
+                </span>
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex items-center gap-1.5 rounded-xl bg-white/90 px-3 py-1.5 text-xs font-bold text-violet-700 shadow-xs dark:bg-slate-900 dark:text-violet-300">
+            <Icon name="bell" className="h-4 w-4" />
+            {locale === "ar" ? "سيصل إشعار فوري لهذا الطالب فقط" : "Instant notification sent only to this student"}
+          </span>
+        </div>
+      )}
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div>
-          <label className={label}>{c.assignTo}</label>
-          <select name="audience" defaultValue={defaultAudience} className={input}>
-            <option value="all">{c.allStudents}</option>
-            {levels.map((l) => (
-              <option key={l.id} value={l.name}>
-                {locale === "ar" && l.nameAr ? l.nameAr : l.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={label}>{c.subject}</label>
-          <select name="subjectId" className={input}>
-            {subjects.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.icon} {locale === "ar" ? s.nameAr : s.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={label}>{c.taskType}</label>
-          <select name="taskType" required defaultValue="assignment" className={input}>
-            {TASK_TYPES.map((tp) => (
-              <option key={tp} value={tp}>
+      {/* Quick Type Switcher Pills */}
+      <div>
+        <label className={label}>{c.taskType}</label>
+        <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">
+          {TASK_TYPES.map((tp) => {
+            const active = taskType === tp;
+            const iconName = tp === "quiz" ? "quiz" : tp === "lab" ? "flask" : tp === "worksheet" ? "file" : "clipboard";
+            return (
+              <button
+                key={tp}
+                type="button"
+                onClick={() => setTaskType(tp)}
+                className={`flex items-center justify-center gap-2 rounded-xl border px-3 py-3 text-sm font-bold transition ${
+                  active
+                    ? "border-navy-500 bg-navy-500 text-white shadow-md shadow-navy-500/20"
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:border-blue-400 hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                }`}
+              >
+                <Icon name={iconName} className="h-4.5 w-4.5" />
                 {taskTypeLabel(locale, tp)}
-              </option>
-            ))}
+              </button>
+            );
+          })}
+        </div>
+        <input type="hidden" name="taskType" value={taskType} />
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-2">
+        <div>
+          <label htmlFor="task-audience" className={label}>
+            {c.assignTo}
+          </label>
+          <select
+            id="task-audience"
+            name="audience"
+            value={audience}
+            onChange={(e) => setAudience(e.target.value)}
+            className={field}
+          >
+            <optgroup label={locale === "ar" ? "الكل أو الصف الدراسي" : "All or Class Grade"}>
+              <option value="all">{c.allStudents}</option>
+              {grades.map((g) => (
+                <option key={g} value={g}>
+                  {gradeLabel(locale, g)}
+                </option>
+              ))}
+            </optgroup>
+            {students.length > 0 && (
+              <optgroup label={locale === "ar" ? "طالب محدد (مهمة خاصة)" : "Specific Student (Personal)"}>
+                {students.map((s) => (
+                  <option key={s.id} value={`student:${s.id}`}>
+                    {s.fullName} ({s.studentCode} · {gradeLabel(locale, s.grade)})
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
+
         <div>
-          <label className={label}>{c.dueDate}</label>
+          <label htmlFor="task-due" className={label}>
+            {c.dueDate}
+          </label>
           <input
+            id="task-due"
             name="dueDate"
             type="date"
             required
-            defaultValue={new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)}
-            className={input}
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+            className={field}
           />
         </div>
       </div>
 
-      <div>
-        <label className={label}>{c.termLabel}</label>
-        <select name="termId" defaultValue={terms.find((tm) => tm.isActive)?.id ?? ""} className={input}>
-          <option value="">{c.noTerm}</option>
-          {terms.map((tm) => (
-            <option key={tm.id} value={tm.id}>
-              {locale === "ar" && tm.nameAr ? tm.nameAr : tm.name}
-              {tm.isActive ? ` · ${c.activeTerm}` : ""}
-            </option>
-          ))}
-        </select>
+      <div className="grid gap-5 sm:grid-cols-3">
+        <div>
+          <label htmlFor="task-subject" className={label}>
+            {c.subject}
+          </label>
+          <select
+            id="task-subject"
+            name="subjectId"
+            value={subjectId}
+            onChange={(e) => setSubjectId(Number(e.target.value))}
+            className={field}
+          >
+            {subjects.map((s) => (
+              <option key={s.id} value={s.id}>
+                {locale === "ar" ? s.nameAr : s.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label htmlFor="task-max-score" className={label}>
+            {locale === "ar" ? "الدرجة العظمى" : "Max Score"}
+          </label>
+          <input
+            id="task-max-score"
+            name="maxScore"
+            type="number"
+            min={5}
+            max={1000}
+            value={maxScore}
+            onChange={(e) => setMaxScore(Number(e.target.value) || 100)}
+            className={field}
+          />
+        </div>
+
+        {terms.length > 0 && (
+          <div>
+            <label htmlFor="task-term" className={label}>
+              {locale === "ar" ? "الفصل الدراسي" : "Academic Term"}
+            </label>
+            <select id="task-term" name="termId" defaultValue={activeTerm?.id ?? ""} className={field}>
+              {terms.map((tm) => (
+                <option key={tm.id} value={tm.id}>
+                  {locale === "ar" ? tm.nameAr : tm.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div>
-        <label className={label}>{c.taskTitle}</label>
-        <input name="title" required minLength={3} placeholder={c.taskTitlePh} className={input} />
+        <label htmlFor="task-title" className={label}>
+          {c.taskTitle}
+        </label>
+        <input
+          id="task-title"
+          name="title"
+          required
+          minLength={3}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={c.taskTitlePh}
+          className={field}
+        />
       </div>
 
       <div>
-        <label className={label}>{c.description}</label>
-        <textarea name="description" rows={3} placeholder={c.descriptionPh} className={input} />
+        <label htmlFor="task-desc" className={label}>
+          {c.description}
+        </label>
+        <textarea
+          id="task-desc"
+          name="description"
+          rows={4}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder={c.descriptionPh}
+          className={field}
+        />
       </div>
 
-      <div>
-        <label className={label}>{c.attachMaterials}</label>
-        <input ref={ref} type="file" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
-        {file ? (
-          <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-            <Icon name="file" className="h-6 w-6 text-slate-500" />
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-semibold text-slate-800 dark:text-slate-100">{file.name}</p>
-              <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
+      {/* Interactive Quiz Builder when Quiz is selected */}
+      {taskType === "quiz" && (
+        <div className="space-y-4 rounded-2xl border border-violet-200 bg-violet-50/50 p-5 dark:border-violet-500/30 dark:bg-violet-500/10">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-9 w-9 place-items-center rounded-xl bg-violet-600 text-white">
+                <Icon name="quiz" className="h-5 w-5" />
+              </span>
+              <div>
+                <p className="text-base font-bold text-slate-900 dark:text-white">
+                  {locale === "ar" ? "أسئلة الاختبار التفاعلي (تصحيح تلقائي)" : "Interactive Quiz Questions (Auto-Graded)"}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {locale === "ar"
+                    ? "أضف أسئلة اختيار من متعدد ليحلها الطالب مباشرة ويحصل على درجته فوراً"
+                    : "Add multiple-choice questions so students can answer interactively and get instant grading"}
+                </p>
+              </div>
             </div>
-            <button type="button" onClick={() => setFile(null)} className="rounded-lg px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 dark:hover:bg-red-500/10">
-              {c.removeFile}
+            <button
+              type="button"
+              onClick={() => setQuestions((prev) => [...prev, emptyQuestion()])}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3.5 py-2 text-xs font-bold text-white shadow-xs hover:bg-violet-700"
+            >
+              <Icon name="plus" className="h-4 w-4" />
+              {locale === "ar" ? "إضافة سؤال" : "Add Question"}
             </button>
           </div>
+
+          <div className="space-y-4">
+            {questions.map((q, qIdx) => (
+              <div
+                key={qIdx}
+                className="space-y-3 rounded-xl border border-slate-200 bg-white p-4 shadow-xs dark:border-slate-700 dark:bg-slate-900"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="rounded-lg bg-violet-100 px-2.5 py-1 text-xs font-bold text-violet-800 dark:bg-violet-500/20 dark:text-violet-200">
+                    {locale === "ar" ? `سؤال ${qIdx + 1}` : `Question ${qIdx + 1}`}
+                  </span>
+                  {questions.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => setQuestions((prev) => prev.filter((_, i) => i !== qIdx))}
+                      className="text-xs font-bold text-rose-600 hover:underline"
+                    >
+                      {locale === "ar" ? "حذف السؤال" : "Remove"}
+                    </button>
+                  )}
+                </div>
+
+                <input
+                  value={q.question}
+                  onChange={(e) => updateQuestion(qIdx, { question: e.target.value })}
+                  placeholder={locale === "ar" ? "نص السؤال..." : "Write the question prompt..."}
+                  className={field}
+                />
+
+                <div className="grid gap-2.5 sm:grid-cols-2">
+                  {([0, 1, 2, 3] as const).map((optIdx) => (
+                    <div
+                      key={optIdx}
+                      className={`flex items-center gap-2 rounded-xl border px-3 py-2 ${
+                        q.correctIndex === optIdx
+                          ? "border-emerald-500 bg-emerald-50/70 dark:bg-emerald-500/10"
+                          : "border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name={`quiz-correct-${qIdx}`}
+                        checked={q.correctIndex === optIdx}
+                        onChange={() => updateQuestion(qIdx, { correctIndex: optIdx })}
+                        className="h-4 w-4 accent-emerald-600"
+                        title={locale === "ar" ? "الإجابة الصحيحة" : "Correct option"}
+                      />
+                      <input
+                        value={q.options[optIdx]}
+                        onChange={(e) => updateOption(qIdx, optIdx, e.target.value)}
+                        placeholder={
+                          locale === "ar" ? `الخيار ${optIdx + 1}` : `Option ${optIdx + 1}`
+                        }
+                        className="w-full bg-transparent text-sm text-slate-900 outline-none dark:text-white"
+                      />
+                    </div>
+                  ))}
+                </div>
+
+                <input
+                  value={q.explanation}
+                  onChange={(e) => updateQuestion(qIdx, { explanation: e.target.value })}
+                  placeholder={
+                    locale === "ar"
+                      ? "تفسير الإجابة الصحيحة (اختياري)..."
+                      : "Optional explanation shown after submission..."
+                  }
+                  className={field}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Cloud Attachment: Supabase `files` Bucket OR Google Drive */}
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className={label + " !mb-0"}>{c.attachMaterials}</span>
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+            <button
+              type="button"
+              onClick={() => setStorageMode("supabase")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                storageMode === "supabase"
+                  ? "bg-white text-navy-700 shadow-xs dark:bg-slate-900 dark:text-sky-300"
+                  : "text-slate-600 dark:text-slate-400"
+              }`}
+            >
+              <Icon name="cloud" className="h-4 w-4" />
+              {locale === "ar" ? "سحابة Supabase (files)" : "Supabase Cloud (files)"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setStorageMode("drive")}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                storageMode === "drive"
+                  ? "bg-white text-navy-700 shadow-xs dark:bg-slate-900 dark:text-sky-300"
+                  : "text-slate-600 dark:text-slate-400"
+              }`}
+            >
+              <Icon name="drive" className="h-4 w-4" />
+              Google Drive
+            </button>
+          </div>
+        </div>
+
+        {storageMode === "supabase" ? (
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              onFile(e.dataTransfer.files[0]);
+            }}
+            onClick={() => inputRef.current?.click()}
+            className="flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 px-6 py-8 text-center transition hover:border-blue-400 hover:bg-blue-50/40 dark:border-slate-700 dark:bg-slate-800/40"
+          >
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,image/*"
+              className="hidden"
+              onChange={(e) => onFile(e.target.files?.[0])}
+            />
+            {file ? (
+              <div className="space-y-1">
+                <div className="mx-auto grid h-11 w-11 place-items-center rounded-xl bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300">
+                  <Icon name="check" className="h-6 w-6" />
+                </div>
+                <p className="font-bold text-slate-900 dark:text-white">{file.name}</p>
+                <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFile(null);
+                  }}
+                  className="text-xs font-semibold text-red-600 hover:underline"
+                >
+                  {c.removeFile}
+                </button>
+              </div>
+            ) : (
+              <>
+                <span className="grid h-12 w-12 place-items-center rounded-2xl bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-300">
+                  <Icon name="cloud" className="h-6 w-6" />
+                </span>
+                <p className="mt-2 font-bold text-slate-800 dark:text-slate-100">{c.uploadHint}</p>
+                <p className="text-xs text-slate-500">{c.uploadLimit}</p>
+              </>
+            )}
+          </div>
         ) : (
-          <div className="flex w-full flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-slate-300 py-8 text-slate-500 transition hover:border-blue-400 hover:bg-blue-50/50 dark:border-slate-600 dark:hover:bg-slate-800/50">
-            <Icon name="upload" className="h-9 w-9" />
-            <span className="font-bold text-slate-700 dark:text-slate-200">{c.uploadHint}</span>
-            <span className="text-xs">{c.uploadLimit}</span>
-            <div className="mt-2 flex flex-wrap items-center justify-center gap-2">
-              <button
-                type="button"
-                onClick={() => ref.current?.click()}
-                className="rounded-lg bg-blue-500 px-4 py-2 text-xs font-bold text-white hover:bg-blue-600"
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                {locale === "ar"
+                  ? "ارفع ملف الـ PDF أو DOC في مجلد Google Drive ثم الصق رابط المشاركة هنا"
+                  : "Upload your PDF or DOC to the platform Google Drive folder, then paste its share link below"}
+              </p>
+              <a
+                href={GOOGLE_DRIVE_FOLDER_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-navy-700 shadow-xs ring-1 ring-slate-200 hover:bg-slate-50 dark:bg-slate-900 dark:text-sky-300 dark:ring-slate-700"
               >
-                {c.uploadHint}
-              </button>
-              <button
-                type="button"
-                onClick={attachTemplateWorksheet}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-200"
-              >
-                📄 {locale === "ar" ? "إرفاق نموذج ورقة عمل" : "Attach worksheet template"}
-              </button>
+                <Icon name="drive" className="h-4 w-4" />
+                {locale === "ar" ? "فتح مجلد Google Drive" : "Open Google Drive Folder"}
+              </a>
             </div>
+            <input
+              type="url"
+              value={driveUrl}
+              onChange={(e) => setDriveUrl(e.target.value)}
+              placeholder="https://drive.google.com/file/d/..."
+              className={field}
+              dir="ltr"
+            />
+            <input
+              type="text"
+              value={driveFileName}
+              onChange={(e) => setDriveFileName(e.target.value)}
+              placeholder={locale === "ar" ? "اسم الملف المعروض للطالب (مثال: واجب-الكيمياء.pdf)" : "Display filename (e.g. chemistry-worksheet.pdf)"}
+              className={field}
+            />
           </div>
         )}
         {fileError && <p className="mt-2 text-sm font-semibold text-red-600">{fileError}</p>}
       </div>
 
-      {error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
+      {formError && (
+        <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300">
+          {formError}
+        </p>
+      )}
 
-      <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
-        <Link href="/tasks" className="rounded-xl px-5 py-3 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800">
+      <div className="flex flex-wrap justify-end gap-3 pt-2">
+        <Link
+          href={selectedStudent ? `/students/${selectedStudent.id}` : "/tasks"}
+          className="rounded-xl border border-slate-300 px-6 py-3 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
           {c.cancel}
         </Link>
-        <button disabled={pending} className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-7 py-3 text-base font-bold text-white shadow-lg shadow-blue-500/25 hover:bg-blue-600 disabled:opacity-60">
-          <Icon name="assign" className="h-5 w-5" />
-          {pending ? c.assigning : c.assignTask}
+        <button
+          disabled={pending}
+          className="inline-flex items-center gap-2 rounded-xl bg-blue-500 px-6 py-3 text-sm font-bold text-white shadow-lg shadow-blue-500/25 hover:bg-blue-600 disabled:opacity-60"
+        >
+          <Icon name={taskType === "quiz" ? "quiz" : "assign"} className="h-4.5 w-4.5" />
+          {pending ? statusNote || c.assigning : taskType === "quiz" ? (locale === "ar" ? "إسناد الاختبار" : "Assign Quiz") : c.assignTask}
         </button>
       </div>
     </form>

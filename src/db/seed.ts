@@ -29,10 +29,10 @@ const MATH_IMG = "https://images.pexels.com/photos/6238050/pexels-photo-6238050.
 const AVATAR_IMG = "https://images.pexels.com/photos/8199174/pexels-photo-8199174.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940";
 
 const seedSubjects = [
-  { name: "Chemistry", nameAr: "الكيمياء", color: "emerald", icon: "🧪" },
-  { name: "Physics", nameAr: "الفيزياء", color: "sky", icon: "⚛️" },
-  { name: "Biology", nameAr: "الأحياء", color: "rose", icon: "🧬" },
-  { name: "Mathematics", nameAr: "الرياضيات", color: "amber", icon: "📐" },
+  { name: "Chemistry", nameAr: "الكيمياء", color: "emerald", icon: "chemistry" },
+  { name: "Physics", nameAr: "الفيزياء", color: "sky", icon: "physics" },
+  { name: "Biology", nameAr: "الأحياء", color: "rose", icon: "biology" },
+  { name: "Mathematics", nameAr: "الرياضيات", color: "amber", icon: "mathematics" },
 ];
 
 const seedMaterials: SeedMaterial[] = [
@@ -331,7 +331,7 @@ const TASK_META: Record<string, { type: string; attachment?: string }> = {
   "Momentum conservation lab": { type: "lab", attachment: "momentum-data-sheet.txt" },
   "Limits homework": { type: "assignment" },
   "Atomic structure quiz": { type: "quiz" },
-  "Microscope drawing": { type: "worksheet", attachment: "microscope-template.txt" },
+  "Microscope drawing": { type: "worksheet", attachment: "microscope-diagram-guide.txt" },
   "Kinematics graphs worksheet": { type: "worksheet", attachment: "velocity-graphs.txt" },
   "Bonding summary poster": { type: "assignment" },
   "Genetics crosses practice": { type: "worksheet", attachment: "punnett-practice.txt" },

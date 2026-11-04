@@ -3,11 +3,16 @@ import type { ReactNode } from "react";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n, getTheme } from "@/lib/i18n-server";
 import { displayName } from "@/lib/i18n";
+import { getNotificationsForUser, getUnreadNotificationCount } from "@/lib/notifications";
 import { Avatar, LocaleToggle, ThemeToggle } from "@/components/ui";
+import { NotificationBell } from "@/components/NotificationBell";
 import { MobileMenuButton } from "./Shell";
 
 export async function TopBar({ title, extra }: { title: string; extra?: ReactNode }) {
   const [user, { t, locale }, theme] = await Promise.all([getCurrentUser(), getI18n(), getTheme()]);
+  const [notifItems, unreadNotifications] = user
+    ? await Promise.all([getNotificationsForUser(user.id, 12), getUnreadNotificationCount(user.id)])
+    : [[], 0];
 
   return (
     <header className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-2xl bg-navy-500 px-3 py-2.5 text-white shadow-lg shadow-navy-900/20 sm:px-4 md:grid-cols-[1fr_auto_1fr]">
@@ -36,6 +41,23 @@ export async function TopBar({ title, extra }: { title: string; extra?: ReactNod
 
       <div className="flex items-center justify-end gap-2">
         {extra}
+        {user && (
+          <NotificationBell
+            locale={locale}
+            initialUnread={unreadNotifications}
+            initialItems={notifItems.map((n) => ({
+              id: n.id,
+              kind: n.kind,
+              title: n.title,
+              titleAr: n.titleAr,
+              body: n.body,
+              bodyAr: n.bodyAr,
+              href: n.href,
+              readAt: n.readAt ? n.readAt.toISOString() : null,
+              createdAt: n.createdAt.toISOString(),
+            }))}
+          />
+        )}
         <ThemeToggle theme={theme} label={t("common.darkMode")} />
         <LocaleToggle locale={locale} />
       </div>

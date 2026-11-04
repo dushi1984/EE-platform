@@ -8,7 +8,7 @@ import { Icon, Logo } from "@/components/ui";
 type NavItem = {
   href: string;
   label: string;
-  icon: "dashboard" | "tasks" | "materials" | "grades" | "profile" | "students" | "payments" | "mail";
+  icon: "dashboard" | "tasks" | "materials" | "grades" | "profile" | "students" | "payments" | "mail" | "bell" | "settings";
 };
 
 type ShellCtx = { open: boolean; setOpen: (v: boolean) => void; sessionToken: string; unreadCount: number };
@@ -256,6 +256,7 @@ export function Shell({
   menuLabel,
   initialSessionToken,
   unreadCount,
+  unreadNotifications = 0,
   children,
 }: {
   items: NavItem[];
@@ -264,17 +265,23 @@ export function Shell({
   menuLabel: string;
   initialSessionToken: string;
   unreadCount: number;
+  unreadNotifications?: number;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [sessionToken, setSessionToken] = useState(initialSessionToken);
   const [unread, setUnread] = useState(unreadCount);
+  const [unreadNotifs, setUnreadNotifs] = useState(unreadNotifications);
   const pathname = usePathname();
 
   useEffect(() => {
     setOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    setUnreadNotifs(unreadNotifications);
+  }, [unreadNotifications]);
 
   // Clear the unread badge once the user opens the inbox
   useEffect(() => {
@@ -355,6 +362,16 @@ export function Shell({
                         title={`${unread} unread`}
                       >
                         {unread > 9 ? "9+" : unread}
+                      </span>
+                    )}
+                    {item.icon === "bell" && unreadNotifs > 0 && (
+                      <span
+                        className={`ms-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-sun-400 px-1.5 text-[11px] font-extrabold leading-none text-navy-900 ${
+                          collapsed ? "lg:absolute lg:end-1.5 lg:top-1.5" : ""
+                        }`}
+                        title={`${unreadNotifs} unread`}
+                      >
+                        {unreadNotifs > 9 ? "9+" : unreadNotifs}
                       </span>
                     )}
                   </Link>

@@ -90,9 +90,10 @@ export default async function MessagesPage() {
                       {teacher && (
                         <Link
                           href={`/students/${m.studentId}/message`}
-                          className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-navy-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-sky-300"
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-navy-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-sky-300"
                         >
-                          ↩ {locale === "ar" ? "رد" : "Reply"}
+                          <Icon name="reply" className="h-3.5 w-3.5" />
+                          {locale === "ar" ? "رد" : "Reply"}
                         </Link>
                       )}
                       <Badge tone={m.readAt ? "done" : "todo"}>{m.readAt ? c.read : c.unread}</Badge>

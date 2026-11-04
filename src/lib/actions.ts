@@ -12,6 +12,8 @@ import { LOCALE_COOKIE, THEME_COOKIE } from "./i18n-server";
 import { DEMO_STUDENT_CODE, ensureSeeded } from "@/db/seed";
 import { cardBrand, gatewayAuthorize, isExpired, luhnValid, type Method } from "./gateway";
 import type { TKey } from "./i18n";
+import { notifyTeachers, notifyUsers } from "./notifications";
+import { taskAppliesToStudent } from "./queries";
 
 export type ActionState = { error?: TKey; success?: TKey } | null;
 
@@ -226,6 +228,14 @@ export async function checkoutAction(_prev: CheckoutState, formData: FormData): 
         target: [purchases.userId, purchases.materialId],
         set: { paymentMethod: "free", status: "paid", purchasedAt: new Date() },
       });
+    await notifyUsers([user.id], {
+      kind: "material",
+      title: `Enrolled in ${material.title}`,
+      titleAr: `تم التسجيل في ${material.titleAr || material.title}`,
+      body: "You now have full access to all lessons and files.",
+      bodyAr: "لديك الآن وصول كامل إلى جميع الدروس والملفات.",
+      href: `/materials/${material.slug}`,
+    }).catch(() => {});
     revalidatePath("/materials");
     revalidatePath(`/materials/${material.slug}`);
     revalidatePath("/dashboard");
@@ -325,6 +335,25 @@ export async function checkoutAction(_prev: CheckoutState, formData: FormData): 
       target: [purchases.userId, purchases.materialId],
       set: { pricePaidCents: amount, paymentMethod: method as PaymentMethod, status: "paid", purchasedAt: new Date() },
     });
+
+  await Promise.all([
+    notifyUsers([user.id], {
+      kind: "payment",
+      title: `Unlocked: ${material.title}`,
+      titleAr: `تم فتح المادة: ${material.titleAr || material.title}`,
+      body: `Reference ${reference} · Full access unlocked.`,
+      bodyAr: `مرجع العملية ${reference} · تم تفعيل الوصول الكامل.`,
+      href: `/materials/${material.slug}`,
+    }),
+    notifyTeachers({
+      kind: "payment",
+      title: `${user.fullName} purchased ${material.title}`,
+      titleAr: `قام ${user.fullName} بشراء ${material.titleAr || material.title}`,
+      body: `Ref ${reference} · ${label}`,
+      bodyAr: `المرجع ${reference} · ${label}`,
+      href: "/payments",
+    }),
+  ]).catch(() => {});
 
   revalidatePath("/materials");
   revalidatePath(`/materials/${material.slug}`);
@@ -440,10 +469,126 @@ export async function submitQuizAction(_prev: QuizResult, formData: FormData): P
   if (score === total || score / total >= 0.5) {
     await db.insert(lessonProgress).values({ userId: user.id, lessonId }).onConflictDoNothing();
   }
+  await notifyTeachers({
+    kind: "quiz",
+    title: `${user.fullName} completed quiz: ${lesson.title}`,
+    titleAr: `أنهى ${user.fullName} اختبار: ${lesson.titleAr || lesson.title}`,
+    body: `Score: ${score}/${total}`,
+    bodyAr: `النتيجة: ${score}/${total}`,
+    href: `/students/${user.id}`,
+  }).catch(() => {});
   revalidatePath(`/materials/${lesson.material.slug}`, "layout");
   revalidatePath("/grades");
   revalidatePath("/dashboard");
   return { score, total, results };
+}
+
+export type TaskQuizSubmitResult = {
+  ok: boolean;
+  score: number;
+  maxScore: number;
+  correctCount: number;
+  total: number;
+  results: { questionId: number; correct: boolean; correctIndex: number; explanation: string | null }[];
+} | null;
+
+export async function submitTaskQuizAction(taskId: number, answers: Record<number, number>): Promise<TaskQuizSubmitResult> {
+  const user = await getCurrentUser();
+  if (!user || user.role !== "student") return null;
+
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!task || task.status === "closed" || !task.quizQuestions?.length) return null;
+  if (!taskAppliesToStudent(task, user)) return null;
+
+  const questions = task.quizQuestions;
+  const results = questions.map((q) => {
+    const picked = Number(answers[q.id]);
+    return {
+      questionId: q.id,
+      correct: picked === q.correctIndex,
+      correctIndex: q.correctIndex,
+      explanation: q.explanation ?? null,
+    };
+  });
+  const correctCount = results.filter((r) => r.correct).length;
+  const total = questions.length;
+  const scaledScore = Math.round((correctCount / total) * task.maxScore);
+  const now = new Date();
+
+  await db
+    .insert(taskSubmissions)
+    .values({
+      userId: user.id,
+      taskId: task.id,
+      fileName: "online-quiz-attempt.txt",
+      note: `Online Quiz: ${correctCount}/${total} correct (${scaledScore}/${task.maxScore})`,
+      score: scaledScore,
+      gradedAt: now,
+      submittedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [taskSubmissions.userId, taskSubmissions.taskId],
+      set: {
+        fileName: "online-quiz-attempt.txt",
+        note: `Online Quiz: ${correctCount}/${total} correct (${scaledScore}/${task.maxScore})`,
+        score: scaledScore,
+        gradedAt: now,
+        submittedAt: now,
+      },
+    });
+
+  await db
+    .insert(taskProgress)
+    .values({ userId: user.id, taskId: task.id, status: "done", progress: 100 })
+    .onConflictDoUpdate({
+      target: [taskProgress.userId, taskProgress.taskId],
+      set: { status: "done", progress: 100, updatedAt: now },
+    });
+
+  const existingGrade = await db.query.grades.findFirst({
+    where: and(eq(grades.userId, user.id), eq(grades.taskId, task.id)),
+  });
+  if (existingGrade) {
+    await db
+      .update(grades)
+      .set({ score: scaledScore, maxScore: task.maxScore, gradedAt: now })
+      .where(eq(grades.id, existingGrade.id));
+  } else {
+    await db.insert(grades).values({
+      userId: user.id,
+      subjectId: task.subjectId,
+      taskId: task.id,
+      title: task.title,
+      titleAr: task.titleAr,
+      kind: "quiz",
+      score: scaledScore,
+      maxScore: task.maxScore,
+      gradedAt: now,
+    });
+  }
+
+  await notifyTeachers({
+    kind: "quiz",
+    title: `${user.fullName} completed quiz: ${task.title}`,
+    titleAr: `أكمل ${user.fullName} الاختبار: ${task.titleAr || task.title}`,
+    body: `Auto-graded score: ${scaledScore}/${task.maxScore} (${correctCount}/${total})`,
+    bodyAr: `الدرجة التلقائية: ${scaledScore}/${task.maxScore} (${correctCount}/${total})`,
+    href: `/tasks?task=${task.id}&tab=graded`,
+  }).catch(() => {});
+
+  revalidatePath(`/tasks/${task.id}`);
+  revalidatePath("/tasks");
+  revalidatePath("/grades");
+  revalidatePath("/dashboard");
+
+  return {
+    ok: true,
+    score: scaledScore,
+    maxScore: task.maxScore,
+    correctCount,
+    total,
+    results,
+  };
 }
 
 /* ---------- Profile ---------- */

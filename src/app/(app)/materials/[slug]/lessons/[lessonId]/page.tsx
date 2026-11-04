@@ -102,7 +102,7 @@ export default async function LessonPage({
                       className={`flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm transition ${isCurrent ? "bg-sun-400/90 font-semibold text-navy-800" : "text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}
                     >
                       <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-bold ${isDone ? "bg-green-500 text-white" : isCurrent ? "bg-navy-500 text-white" : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-200"}`}>
-                        {isDone ? "✓" : i + 1}
+                        {isDone ? <Icon name="check" className="h-3 w-3" /> : i + 1}
                       </span>
                       <span className="flex-1">
                         <span className="block leading-snug">{tr(locale, l.title, l.titleAr)}</span>
@@ -209,19 +209,23 @@ export default async function LessonPage({
 
               {percent === 100 && (
                 <div className="rounded-2xl bg-gradient-to-br from-green-500 to-teal-600 p-6 text-white shadow-lg">
-                  <h3 className="text-xl font-bold">🎓 {t("lesson.finished")}</h3>
+                  <h3 className="flex items-center gap-2 text-xl font-bold">
+                    <Icon name="graduation" className="h-6 w-6" />
+                    {t("lesson.finished")}
+                  </h3>
                   <p className="mt-1 text-green-50">{t("lesson.finishedBody")}</p>
-              <div className="mt-4 flex flex-wrap gap-3 print:hidden">
-                <Link href="/grades" className="inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
-                  {t("grades.title")} <ForwardArrow />
-                </Link>
-                <Link
-                  href={`/materials/${material.slug}/certificate`}
-                  className="inline-block rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-navy-900 shadow hover:bg-amber-300"
-                >
-                  🏆 {locale === "ar" ? "استلم شهادتك" : "Get your certificate"}
-                </Link>
-              </div>
+                  <div className="mt-4 flex flex-wrap gap-3 print:hidden">
+                    <Link href="/grades" className="inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
+                      {t("grades.title")} <ForwardArrow />
+                    </Link>
+                    <Link
+                      href={`/materials/${material.slug}/certificate`}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-navy-900 shadow hover:bg-amber-300"
+                    >
+                      <Icon name="trophy" className="h-4 w-4" />
+                      {locale === "ar" ? "استلم شهادتك" : "Get your certificate"}
+                    </Link>
+                  </div>
                 </div>
               )}
             </>

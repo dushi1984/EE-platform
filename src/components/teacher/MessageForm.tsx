@@ -3,7 +3,12 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useI18n } from "@/lib/i18n-client";
-import { MAX_FILE_BYTES, formatBytes, getClientSessionToken } from "@/lib/file-client";
+import {
+  formatBytes,
+  getClientSessionToken,
+  MAX_FILE_BYTES,
+  uploadFileToCloudBucket,
+} from "@/lib/file-client";
 import { tt } from "@/lib/i18n-teacher";
 import { Icon } from "@/components/ui";
 import { reloadWithSession } from "@/components/shell/Shell";
@@ -32,9 +37,18 @@ export function MessageForm({ studentId }: { studentId: number }) {
     e.preventDefault();
     setError("");
     const out = new FormData(e.currentTarget);
-    if (file) out.set("file", file);
     setPending(true);
     try {
+      if (file) {
+        const uploaded = await uploadFileToCloudBucket("messages", file);
+        if (uploaded) {
+          out.set("storagePath", uploaded.storagePath);
+          out.set("fileName", uploaded.fileName);
+          out.set("mimeType", uploaded.mimeType);
+        } else {
+          out.set("file", file);
+        }
+      }
       const token = getClientSessionToken();
       const res = await fetch("/api/messages/send", {
         method: "POST",
@@ -98,7 +112,7 @@ export function MessageForm({ studentId }: { studentId: number }) {
         <label className="inline-flex cursor-pointer items-center gap-2 text-lg font-medium text-blue-600 hover:underline">
           <Icon name="file" className="h-6 w-6" />
           {c.attachFile}
-          <input type="file" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
+          <input type="file" accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,image/*" className="hidden" onChange={(e) => onFile(e.target.files?.[0])} />
         </label>
         <span className="flex-1" />
         <Link href={`/students/${studentId}`} className="rounded-2xl border border-slate-300 px-8 py-3 text-base font-medium text-slate-500 hover:bg-slate-50 dark:border-slate-600 dark:hover:bg-slate-800">{c.cancel}</Link>

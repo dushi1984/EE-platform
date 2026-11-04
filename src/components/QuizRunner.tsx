@@ -143,8 +143,9 @@ export function QuizRunner({
                     </span>
                   </div>
                   {r?.explanation && !ok && (
-                    <p className="mt-1 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-                      ✓ {qq.options[r.correctIndex]} — {r.explanation}
+                    <p className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      <Icon name="check" className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                      <span>{qq.options[r.correctIndex]} — {r.explanation}</span>
                     </p>
                   )}
                 </li>

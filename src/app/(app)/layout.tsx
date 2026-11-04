@@ -5,6 +5,7 @@ import { getCurrentUser, SESSION_HEADER } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { tt } from "@/lib/i18n-teacher";
 import { getUnreadMessageCount } from "@/lib/queries";
+import { getUnreadNotificationCount } from "@/lib/notifications";
 import { Shell } from "@/components/shell/Shell";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,10 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (!user) redirect(sessionToken ? "/login?reauth=1" : "/login");
   const { t, locale } = await getI18n();
   const c = tt(locale);
-  const unreadCount = await getUnreadMessageCount(user.id);
+  const [unreadCount, unreadNotifications] = await Promise.all([
+    getUnreadMessageCount(user.id, user.role),
+    getUnreadNotificationCount(user.id),
+  ]);
 
   const items =
     user.role === "teacher"
@@ -27,7 +31,8 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           { href: "/materials", label: t("nav.materials"), icon: "materials" as const },
           { href: "/payments", label: c.navPayments, icon: "payments" as const },
           { href: "/messages", label: c.messages, icon: "mail" as const },
-          { href: "/settings", label: c.navSettings, icon: "grades" as const },
+          { href: "/notifications", label: t("nav.notifications"), icon: "bell" as const },
+          { href: "/settings", label: c.navSettings, icon: "settings" as const },
         ]
       : [
           { href: "/dashboard", label: t("nav.dashboard"), icon: "dashboard" as const },
@@ -35,6 +40,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           { href: "/materials", label: t("nav.materials"), icon: "materials" as const },
           { href: "/grades", label: t("nav.grades"), icon: "grades" as const },
           { href: "/messages", label: c.messages, icon: "mail" as const },
+          { href: "/notifications", label: t("nav.notifications"), icon: "bell" as const },
           { href: "/profile", label: t("nav.profile"), icon: "profile" as const },
         ];
 
@@ -46,6 +52,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       menuLabel={t("nav.menu")}
       initialSessionToken={sessionToken}
       unreadCount={unreadCount}
+      unreadNotifications={unreadNotifications}
     >
       {children}
     </Shell>

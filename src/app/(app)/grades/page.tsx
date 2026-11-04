@@ -5,7 +5,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
 import { getGradeInsights, getGradesForUser } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, EmptyState, ProgressBar, SectionTitle } from "@/components/ui";
+import { Badge, Card, EmptyState, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Grades" };
 
@@ -39,7 +39,7 @@ export default async function GradesPage() {
         </h2>
 
         {insights.count === 0 ? (
-          <EmptyState icon="📊" title={t("grades.empty")} />
+          <EmptyState icon="grades" title={t("grades.empty")} />
         ) : (
           <div className="mt-5 grid gap-5 lg:grid-cols-[280px_1fr]">
             {/* Overall average donut */}
@@ -124,7 +124,7 @@ export default async function GradesPage() {
             <Card className="divide-y divide-slate-100 dark:divide-slate-800">
               {data.bySubject.map((s) => (
                 <div key={s.subject.id} className="flex items-center gap-4 px-5 py-4">
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-xl dark:bg-slate-800">{s.subject.icon}</span>
+                  <SubjectBadge icon={s.subject.icon} name={s.subject.name} size="md" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold text-slate-900 dark:text-white">{tr(locale, s.subject.name, s.subject.nameAr)}</p>
@@ -161,7 +161,10 @@ export default async function GradesPage() {
                         <tr key={g.id} className="border-t border-slate-100 dark:border-slate-800">
                           <td className="px-5 py-3.5 font-bold text-slate-900 dark:text-white">{tr(locale, g.title, g.titleAr)}</td>
                           <td className="px-4 py-3.5 text-slate-700 dark:text-slate-300">
-                            {g.subject.icon} {tr(locale, g.subject.name, g.subject.nameAr)}
+                            <span className="inline-flex items-center gap-2">
+                              <SubjectBadge icon={g.subject.icon} name={g.subject.name} size="xs" />
+                              <span>{tr(locale, g.subject.name, g.subject.nameAr)}</span>
+                            </span>
                           </td>
                           <td className="px-4 py-3.5">
                             <Badge tone={kindTone[g.kind as keyof typeof kindTone] ?? "neutral"}>{kindLabel(g.kind)}</Badge>

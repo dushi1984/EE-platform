@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import Link from "next/link";
+import { Icon } from "@/components/ui";
 
 export default function AppError({
   error,
@@ -16,8 +17,8 @@ export default function AppError({
 
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center px-4 py-16 text-center">
-      <div className="grid h-16 w-16 place-items-center rounded-full bg-amber-100 text-3xl dark:bg-amber-500/20">
-        ⚠️
+      <div className="grid h-16 w-16 place-items-center rounded-2xl bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-300">
+        <Icon name="alert" className="h-8 w-8" />
       </div>
       <h1 className="mt-4 text-xl font-bold text-slate-900 dark:text-white">Something interrupted this page</h1>
       <p className="mt-2 text-sm leading-relaxed text-slate-600 dark:text-slate-300">

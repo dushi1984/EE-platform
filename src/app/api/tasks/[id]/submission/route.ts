@@ -6,18 +6,11 @@ import {
   removeTaskSubmission,
   saveTaskSubmission,
 } from "@/lib/submissions";
+import { guessMimeType, uploadBufferToFilesBucket } from "@/lib/storage";
+import { notifyTeachers } from "@/lib/notifications";
 
 export const dynamic = "force-dynamic";
 
-/**
- * Real file-upload endpoint for task submissions.
- *
- * Previously the file was base64-encoded into a hidden form field and pushed
- * through a React Server Action. That path is fragile (envelope size ceiling,
- * stale action IDs after rebuilds → Next asks for a full page reload).
- * A plain multipart POST to a route handler has none of those problems and
- * lets us report progress and inline errors.
- */
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -32,7 +25,7 @@ export async function POST(
 
   const { id } = await params;
   const taskId = Number(id);
-  const task = await getOpenTask(taskId);
+  const task = await getOpenTask(taskId, user);
   if (!task) {
     return NextResponse.json({ ok: false, error: "task_not_found_or_closed" }, { status: 404 });
   }
@@ -45,12 +38,22 @@ export async function POST(
   }
 
   const note = String(form.get("note") ?? "").trim();
+  const storagePathIn = String(form.get("storagePath") ?? "").trim() || null;
+  const fileNameIn = String(form.get("fileName") ?? "").trim() || null;
+  const mimeTypeIn = String(form.get("mimeType") ?? "").trim() || null;
+  const fileUrlIn = String(form.get("fileUrl") ?? "").trim() || null;
   const file = form.get("file");
 
   let fileName: string;
-  let fileData: string | null;
+  let fileStoragePath: string | null = storagePathIn;
+  let fileMime: string | null = mimeTypeIn;
+  let fileData: string | null = null;
+  const fileUrl: string | null = fileUrlIn && /^https?:\/\//i.test(fileUrlIn) ? fileUrlIn : null;
 
-  if (file instanceof File && file.size > 0) {
+  if (storagePathIn && fileNameIn) {
+    fileName = fileNameIn;
+    fileMime = guessMimeType(fileNameIn, mimeTypeIn);
+  } else if (file instanceof File && file.size > 0) {
     if (file.size > MAX_UPLOAD_BYTES) {
       return NextResponse.json(
         { ok: false, error: "file_too_big", maxBytes: MAX_UPLOAD_BYTES },
@@ -59,19 +62,50 @@ export async function POST(
     }
     fileName = file.name || `submission-${taskId}`;
     const buffer = Buffer.from(await file.arrayBuffer());
-    const mime = file.type || "application/octet-stream";
-    fileData = `data:${mime};base64,${buffer.toString("base64")}`;
+    const uploaded = await uploadBufferToFilesBucket("submissions", fileName, buffer, file.type);
+    if (uploaded) {
+      fileStoragePath = uploaded.storagePath;
+      fileMime = uploaded.mimeType;
+    } else {
+      const mime = file.type || "application/octet-stream";
+      fileData = `data:${mime};base64,${buffer.toString("base64")}`;
+    }
+  } else if (fileUrl) {
+    fileName = fileNameIn || "Google Drive Submission";
   } else if (note) {
-    // Text-only answer: keep previous behaviour of materialising it as a file.
     fileName = `solution-task-${taskId}.txt`;
-    const body = `Student: ${user.fullName} (${user.studentCode})\nTask ID: ${taskId}\n\n${note}`;
-    fileData = `data:text/plain;charset=utf-8,${encodeURIComponent(body)}`;
+    const body = `Student: ${user.fullName} (${user.studentCode})\nTask: ${task.title} (#${taskId})\n\n${note}`;
+    const buffer = Buffer.from(body, "utf-8");
+    const uploaded = await uploadBufferToFilesBucket("submissions", fileName, buffer, "text/plain; charset=utf-8");
+    if (uploaded) {
+      fileStoragePath = uploaded.storagePath;
+      fileMime = uploaded.mimeType;
+    } else {
+      fileData = `data:text/plain;charset=utf-8,${encodeURIComponent(body)}`;
+    }
   } else {
     return NextResponse.json({ ok: false, error: "no_file_or_note" }, { status: 400 });
   }
 
   try {
-    const submission = await saveTaskSubmission(user.id, taskId, { fileName, fileData, note });
+    const submission = await saveTaskSubmission(user.id, taskId, {
+      fileName,
+      fileData,
+      fileUrl,
+      fileStoragePath,
+      fileMime,
+      note,
+    });
+
+    await notifyTeachers({
+      kind: "submission",
+      title: `${user.fullName} submitted: ${task.title}`,
+      titleAr: `سلّم ${user.fullName} حل المهمة: ${task.titleAr || task.title}`,
+      body: fileName,
+      bodyAr: fileName,
+      href: `/tasks?task=${taskId}&tab=toGrade`,
+    }).catch(() => {});
+
     return NextResponse.json({
       ok: true,
       submission: {

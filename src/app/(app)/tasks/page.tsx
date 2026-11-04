@@ -6,7 +6,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr, type Locale, type Translator } from "@/lib/i18n";
 import { getAllSubjects, getTasksForUser, splitTasks, type TaskRow } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, ProgressBar, SectionTitle } from "@/components/ui";
+import { Badge, Card, Icon, ProgressBar, SectionTitle, SubjectBadge, SubjectGlyph } from "@/components/ui";
 import { TaskActions } from "@/components/TaskActions";
 import { TeacherTasksView } from "@/components/teacher/TeacherTasksView";
 
@@ -28,7 +28,8 @@ export default async function TasksPage({
   const { t, locale } = await getI18n();
 
   const [all, subjects] = await Promise.all([getTasksForUser(user.id), getAllSubjects()]);
-  const subjectFiltered = subject && subject !== "all" ? all.filter((x) => x.subject.name.toLowerCase() === subject.toLowerCase()) : all;
+  const subjectFiltered =
+    subject && subject !== "all" ? all.filter((x) => x.subject.name.toLowerCase() === subject.toLowerCase()) : all;
   const { week, archive } = splitTasks(subjectFiltered);
   const weekFiltered = filter === "all" ? week : week.filter((x) => x.status === filter);
 
@@ -52,7 +53,11 @@ export default async function TasksPage({
             {filters.map((f) => (
               <Link
                 key={f}
-                href={f === "all" ? `/tasks${subject ? `?subject=${subject}` : ""}` : `/tasks?status=${f}${subject ? `&subject=${subject}` : ""}`}
+                href={
+                  f === "all"
+                    ? `/tasks${subject ? `?subject=${subject}` : ""}`
+                    : `/tasks?status=${f}${subject ? `&subject=${subject}` : ""}`
+                }
                 className={`rounded-xl px-4 py-2 text-sm shadow-sm transition ${
                   filter === f
                     ? "bg-slate-900 font-bold text-white dark:bg-white dark:text-slate-900"
@@ -64,10 +69,14 @@ export default async function TasksPage({
             ))}
           </div>
 
-          <div className="flex items-center gap-1.5 text-xs text-slate-500 overflow-x-auto pb-1">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs text-slate-600 dark:text-slate-300">
             <Link
               href={`/tasks${filter !== "all" ? `?status=${filter}` : ""}`}
-              className={`rounded-lg px-2.5 py-1.5 transition ${!subject || subject === "all" ? "bg-navy-500 text-white font-bold" : "bg-white dark:bg-slate-800 hover:text-slate-900"}`}
+              className={`rounded-lg px-2.5 py-1.5 transition ${
+                !subject || subject === "all"
+                  ? "bg-navy-500 font-bold text-white"
+                  : "bg-white hover:text-slate-900 dark:bg-slate-800"
+              }`}
             >
               {locale === "ar" ? "كل المواد" : "All subjects"}
             </Link>
@@ -75,13 +84,14 @@ export default async function TasksPage({
               <Link
                 key={s.id}
                 href={`/tasks?subject=${s.name.toLowerCase()}${filter !== "all" ? `&status=${filter}` : ""}`}
-                className={`rounded-lg px-2.5 py-1.5 whitespace-nowrap transition ${
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 whitespace-nowrap transition ${
                   subject?.toLowerCase() === s.name.toLowerCase()
-                    ? "bg-navy-500 text-white font-bold"
-                    : "bg-white dark:bg-slate-800 hover:text-slate-900"
+                    ? "bg-navy-500 font-bold text-white"
+                    : "bg-white hover:text-slate-900 dark:bg-slate-800"
                 }`}
               >
-                {s.icon} {locale === "ar" ? s.nameAr : s.name}
+                <SubjectGlyph icon={s.icon} name={s.name} className="h-3.5 w-3.5" />
+                <span>{locale === "ar" ? s.nameAr : s.name}</span>
               </Link>
             ))}
           </div>
@@ -139,26 +149,39 @@ function TaskTable({
               return (
                 <tr key={task.id} className="border-t border-slate-100 dark:border-slate-800">
                   <td className="px-5 py-3.5">
-                    <div className="flex items-center gap-2">
-                      <Link href={`/tasks/${task.id}`} className="font-bold text-slate-900 hover:text-navy-500 hover:underline dark:text-white dark:hover:text-sky-300">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link
+                        href={`/tasks/${task.id}`}
+                        className="font-bold text-slate-900 hover:text-navy-500 hover:underline dark:text-white dark:hover:text-sky-300"
+                      >
                         {tr(locale, task.title, task.titleAr)}
                       </Link>
+                      {task.isPersonal && (
+                        <Badge tone="personal">{locale === "ar" ? "خاص بك" : "Personal"}</Badge>
+                      )}
+                      {task.hasQuiz && (
+                        <Badge tone="todo">
+                          <Icon name="quiz" className="h-3 w-3" />
+                          {locale === "ar" ? "اختبار" : "Quiz"}
+                        </Badge>
+                      )}
                       {task.hasSubmission && (
                         <span
-                          className="shrink-0 rounded-full bg-green-100 px-2 py-0.5 text-[10px] font-bold text-green-700 dark:bg-green-500/20 dark:text-green-300"
+                          className="inline-grid h-5 w-5 shrink-0 place-items-center rounded-full bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-300"
                           title={t("tasks.submitted")}
                         >
-                          ✓
+                          <Icon name="check" className="h-3 w-3" />
                         </span>
                       )}
                     </div>
                     {task.description && (
-                      <p className="line-clamp-1 text-xs text-slate-500 mt-0.5">
+                      <p className="mt-0.5 line-clamp-1 text-xs text-slate-500">
                         {tr(locale, task.description, task.descriptionAr)}
                       </p>
                     )}
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      {task.subject.icon} {tr(locale, task.subject.name, task.subject.nameAr)}
+                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs text-slate-500">
+                      <SubjectBadge icon={task.subject.icon} name={task.subject.name} size="xs" />
+                      <span>{tr(locale, task.subject.name, task.subject.nameAr)}</span>
                     </p>
                   </td>
                   <td className="whitespace-nowrap px-4 py-3.5 text-slate-600 dark:text-slate-300">
