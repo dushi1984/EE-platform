@@ -6,16 +6,22 @@ import type { ReactNode } from "react";
 import QRCode from "qrcode";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
+import { canAccessStudentPage, firstAllowedPath, getAccessPolicy, normalizeAccountStatus } from "@/lib/access";
 import { TopBar } from "@/components/shell/TopBar";
-import { BackArrow, Card, ForwardArrow } from "@/components/ui";
+import { BackArrow, Badge, Card, ForwardArrow } from "@/components/ui";
 import { ContactForm, NameForm, NotificationsForm, PasswordForm, PhotoForm } from "@/components/ProfileForms";
 
 export const metadata: Metadata = { title: "Profile" };
 
 export default async function ProfilePage() {
-  const user = await getCurrentUser();
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
   if (!user) redirect("/login");
-  const { t } = await getI18n();
+  const accountStatus = user.role === "student" ? normalizeAccountStatus(user.accountStatus) : "approved";
+  const backHref = user.role === "student" ? firstAllowedPath(user, policy) : "/dashboard";
 
   const h = await headers();
   const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
@@ -28,18 +34,18 @@ export default async function ProfilePage() {
       <TopBar title={t("profile.title")} />
 
       <div className="flex flex-wrap items-center gap-4 px-2">
-        <Link href="/dashboard" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
+        <Link href={backHref} className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
           <BackArrow /> {t("dashboard.title")}
         </Link>
-        {user.role === "student" && (
-          <>
-            <Link href="/grades" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
-              {t("grades.title")} <ForwardArrow />
-            </Link>
-            <Link href="/materials" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
-              {t("materials.title")} <ForwardArrow />
-            </Link>
-          </>
+        {user.role === "student" && canAccessStudentPage(user, "grades", policy) && (
+          <Link href="/grades" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
+            {t("grades.title")} <ForwardArrow />
+          </Link>
+        )}
+        {user.role === "student" && canAccessStudentPage(user, "materials", policy) && (
+          <Link href="/materials" className="text-sm font-bold text-navy-500 hover:underline dark:text-sky-300">
+            {t("materials.title")} <ForwardArrow />
+          </Link>
         )}
       </div>
 
@@ -59,7 +65,27 @@ export default async function ProfilePage() {
           <ContactForm email={user.email} phone={user.phone} parentPhone={user.parentPhone} />
         </Row>
         <Row label={t("common.studentId")}>
-          <p className="flex-1 font-mono text-slate-700 dark:text-slate-200">{user.studentCode}</p>
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="font-mono text-slate-700 dark:text-slate-200">{user.studentCode}</p>
+            {user.role === "student" && (
+              <>
+                <Badge tone="todo">{user.grade}</Badge>
+                <Badge tone={accountStatus === "approved" ? "done" : accountStatus === "pending" ? "in_progress" : "overdue"}>
+                  {accountStatus === "approved"
+                    ? locale === "ar"
+                      ? "حساب معتمد"
+                      : "Approved"
+                    : accountStatus === "pending"
+                      ? locale === "ar"
+                        ? "بانتظار موافقة المعلم"
+                        : "Pending Approval"
+                      : locale === "ar"
+                        ? "موقوف مؤقتاً"
+                        : "Suspended"}
+                </Badge>
+              </>
+            )}
+          </div>
         </Row>
         <Row label={t("profile.password")} last>
           <PasswordForm />

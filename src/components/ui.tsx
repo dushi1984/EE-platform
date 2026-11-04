@@ -342,6 +342,7 @@ export type IconName =
   | "maximize"
   | "reply"
   | "eye"
+  | "clock"
   | "settings";
 
 export function Icon({ name, className = "h-5 w-5" }: { name: IconName; className?: string }) {
@@ -750,6 +751,13 @@ export function Icon({ name, className = "h-5 w-5" }: { name: IconName; classNam
       return (
         <svg {...common}>
           <path d="M20.5 11.5A8.5 8.5 0 1112 3.5M8.5 11.5l2.5 2.5L20 5M18 15v6M15 18h6" />
+        </svg>
+      );
+    case "clock":
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v5l3 2" />
         </svg>
       );
   }

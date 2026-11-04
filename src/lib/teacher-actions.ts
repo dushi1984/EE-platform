@@ -8,6 +8,7 @@ import {
   academicClasses,
   academicLevels,
   academicTerms,
+  accessSettings,
   grades,
   lessons,
   materials,
@@ -19,7 +20,11 @@ import {
   taskSubmissions,
   tasks,
   users,
+  type AccountStatus,
+  type StudentPageKey,
+  type VisitorPageKey,
 } from "@/db/schema";
+import { ALL_STUDENT_PAGES, ALL_VISITOR_PAGES, normalizeAccountStatus } from "./access";
 import { requireTeacher } from "./roles";
 import { generateQrToken, getCurrentUser, hashPassword, sessionPath } from "./session";
 import { getLocale } from "./i18n-server";
@@ -99,6 +104,11 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
     targetGrade = audience === "all" || validGrades.has(audience) ? audience : "all";
   }
 
+  const allowPendingStudents =
+    fd.get("allowPendingStudents") === "on" || fd.get("allowPendingStudents") === "true";
+  const allowVisitors =
+    !targetStudentId && (fd.get("allowVisitors") === "on" || fd.get("allowVisitors") === "true");
+
   const [created] = await db
     .insert(tasks)
     .values({
@@ -114,6 +124,8 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
       targetGrade,
       targetClassId,
       targetStudentId,
+      allowPendingStudents,
+      allowVisitors,
       status: "open",
     })
     .returning();
@@ -497,6 +509,8 @@ export async function createStudentAction(_prev: TeacherActionState, fd: FormDat
       qrToken: generateQrToken(),
       grade: resolvedGrade,
       classId,
+      accountStatus: "approved",
+      approvedAt: new Date(),
     })
     .returning();
 
@@ -564,6 +578,12 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
   if (thumbnailUrl && !/^https?:\/\/|^\//i.test(thumbnailUrl)) return { error: "Cover image must be a valid URL." };
   if (fileUrl && !/^https?:\/\//i.test(fileUrl)) return { error: "Document link must start with https://" };
 
+  const hasAccessFlags = fd.get("hasAccessFlags") === "1";
+  const allowPendingStudents =
+    fd.get("allowPendingStudents") === "on" || fd.get("allowPendingStudents") === "true";
+  const allowVisitors =
+    priceCents === 0 && (fd.get("allowVisitors") === "on" || fd.get("allowVisitors") === "true");
+
   let materialId = id;
   let finalSlug = "";
   let lessonId: number | null = null;
@@ -596,6 +616,12 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
         storageBucket: FILES_BUCKET,
         storagePath: storagePath || existing.storagePath,
         mimeType: mimeType || existing.mimeType,
+        ...(hasAccessFlags
+          ? {
+              allowPendingStudents,
+              allowVisitors: priceCents === 0 ? allowVisitors : false,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(materials.id, id));
@@ -638,6 +664,8 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
         storageBucket: FILES_BUCKET,
         storagePath,
         mimeType,
+        allowPendingStudents: hasAccessFlags ? allowPendingStudents : priceCents === 0,
+        allowVisitors: hasAccessFlags ? allowVisitors : priceCents === 0,
         isNew: true,
       })
       .returning();
@@ -914,3 +942,237 @@ export async function deleteSubjectAction(subjectId: number) {
   revalidatePath("/settings");
   return { ok: true };
 }
+
+/* ---------- Student Signup Approval, Moderation & Access Control ---------- */
+
+export async function setStudentAccountStatusAction(input: {
+  studentId: number;
+  status: AccountStatus;
+  note?: string;
+  classId?: number | null;
+}) {
+  await requireTeacher();
+  const student = await db.query.users.findFirst({ where: eq(users.id, input.studentId) });
+  if (!student || student.role !== "student") {
+    return { ok: false, error: "Student not found." };
+  }
+
+  const nextStatus = normalizeAccountStatus(input.status);
+  const note = (input.note ?? "").trim().slice(0, 500);
+  const patch: Partial<typeof users.$inferInsert> = {
+    accountStatus: nextStatus,
+    statusNote: note,
+    approvedAt: nextStatus === "approved" ? new Date() : student.approvedAt,
+  };
+
+  if (input.classId !== undefined) {
+    if (input.classId === null) {
+      patch.classId = null;
+    } else {
+      const cls = await db.query.academicClasses.findFirst({
+        where: eq(academicClasses.id, input.classId),
+        with: { level: true },
+      });
+      if (cls) {
+        patch.classId = cls.id;
+        patch.grade = cls.level.name;
+      }
+    }
+  }
+
+  // If blocking an account, bump sessionVersion so any active browser cookie is invalidated on next check
+  if (nextStatus === "blocked") {
+    patch.sessionVersion = (student.sessionVersion ?? 0) + 1;
+  }
+
+  await db.update(users).set(patch).where(eq(users.id, student.id));
+
+  if (nextStatus === "approved") {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account approved — full access unlocked!",
+      titleAr: "تمت الموافقة على حسابك — تم فتح جميع الصلاحيات!",
+      body:
+        note ||
+        "Your teacher approved your registration. You now have full access to all tasks, materials, quizzes, messages, and grades.",
+      bodyAr:
+        note ||
+        "وافق معلمك على تسجيلك. يمكنك الآن الوصول الكامل لجميع المهام والمواد والاختبارات والرسائل والدرجات.",
+      href: "/dashboard",
+    }).catch(() => {});
+  } else if (nextStatus === "suspended") {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account temporarily suspended",
+      titleAr: "تم إيقاف حسابك مؤقتاً",
+      body:
+        note ||
+        "Your teacher has temporarily suspended submissions and purchases on your account. Check your messages or contact your teacher for details.",
+      bodyAr:
+        note ||
+        "قام معلمك بإيقاف التسليمات والمشتريات مؤقتاً على حسابك. يرجى مراجعة الرسائل أو التواصل مع معلمك.",
+      href: "/messages",
+    }).catch(() => {});
+  } else if (nextStatus === "blocked") {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account blocked",
+      titleAr: "تم حظر الحساب",
+      body: note || "Your account access has been blocked by your teacher.",
+      bodyAr: note || "تم حظر الوصول إلى حسابك من قِبل المعلم.",
+      href: "/dashboard",
+    }).catch(() => {});
+  } else {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account awaiting teacher review",
+      titleAr: "حسابك بانتظار مراجعة المعلم",
+      body: note || "Your account is currently in limited preview mode while awaiting teacher approval.",
+      bodyAr: note || "حسابك حالياً في وضع الوصول المحدود بانتظار موافقة المعلم.",
+      href: "/dashboard",
+    }).catch(() => {});
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/students");
+  revalidatePath(`/students/${student.id}`);
+  revalidatePath("/notifications");
+  return { ok: true, status: nextStatus };
+}
+
+export async function quickSendStudentMessageAction(studentId: number, bodyText: string) {
+  const teacher = await requireTeacher();
+  const body = bodyText.trim().slice(0, 2000);
+  if (body.length < 1) {
+    return { ok: false, error: "Message cannot be empty." };
+  }
+  const student = await db.query.users.findFirst({ where: eq(users.id, studentId) });
+  if (!student || student.role !== "student") {
+    return { ok: false, error: "Student not found." };
+  }
+
+  await db.insert(messages).values({
+    studentId: student.id,
+    senderId: teacher.id,
+    recipientType: "student",
+    body,
+  });
+
+  await notifyUsers([student.id], {
+    kind: "message",
+    title: `Message from ${teacher.fullName}`,
+    titleAr: `رسالة من ${teacher.fullName}`,
+    body: body.slice(0, 140),
+    bodyAr: body.slice(0, 140),
+    href: "/messages",
+  }).catch(() => {});
+
+  revalidatePath("/messages");
+  revalidatePath("/students");
+  revalidatePath(`/students/${student.id}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function saveAccessPolicyAction(input: {
+  pendingPages: string[];
+  visitorPages: string[];
+  pendingCanSubmitTasks: boolean;
+  pendingCanPurchase: boolean;
+}) {
+  await requireTeacher();
+  const allowedStudentSet = new Set<string>(ALL_STUDENT_PAGES);
+  const allowedVisitorSet = new Set<string>(ALL_VISITOR_PAGES);
+
+  const pendingPages = Array.from(
+    new Set(
+      input.pendingPages.filter((p): p is StudentPageKey => allowedStudentSet.has(p)),
+    ),
+  );
+  if (!pendingPages.includes("profile")) pendingPages.push("profile");
+
+  const visitorPages = Array.from(
+    new Set(
+      input.visitorPages.filter((p): p is VisitorPageKey => allowedVisitorSet.has(p)),
+    ),
+  );
+
+  await db
+    .insert(accessSettings)
+    .values({
+      id: 1,
+      pendingPages,
+      visitorPages,
+      pendingCanSubmitTasks: Boolean(input.pendingCanSubmitTasks),
+      pendingCanPurchase: Boolean(input.pendingCanPurchase),
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: accessSettings.id,
+      set: {
+        pendingPages,
+        visitorPages,
+        pendingCanSubmitTasks: Boolean(input.pendingCanSubmitTasks),
+        pendingCanPurchase: Boolean(input.pendingCanPurchase),
+        updatedAt: new Date(),
+      },
+    });
+
+  revalidatePath("/settings");
+  revalidatePath("/");
+  revalidatePath("/login");
+  revalidatePath("/register");
+  revalidatePath("/dashboard");
+  revalidatePath("/materials");
+  revalidatePath("/tasks");
+  revalidatePath("/grades");
+  revalidatePath("/messages");
+  revalidatePath("/notifications");
+  revalidatePath("/profile");
+  return { ok: true, pendingPages, visitorPages };
+}
+
+export async function setMaterialGuestAccessAction(
+  materialId: number,
+  target: "pending" | "visitors",
+  allowed: boolean,
+) {
+  await requireTeacher();
+  const existing = await db.query.materials.findFirst({ where: eq(materials.id, materialId) });
+  if (!existing) return { ok: false };
+
+  const patch =
+    target === "pending"
+      ? { allowPendingStudents: Boolean(allowed), updatedAt: new Date() }
+      : { allowVisitors: existing.priceCents === 0 ? Boolean(allowed) : false, updatedAt: new Date() };
+
+  await db.update(materials).set(patch).where(eq(materials.id, materialId));
+  revalidatePath("/settings");
+  revalidatePath("/materials");
+  revalidatePath(`/materials/${existing.slug}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function setTaskGuestAccessAction(
+  taskId: number,
+  target: "pending" | "visitors",
+  allowed: boolean,
+) {
+  await requireTeacher();
+  const existing = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!existing) return { ok: false };
+
+  const patch =
+    target === "pending"
+      ? { allowPendingStudents: Boolean(allowed) }
+      : { allowVisitors: existing.targetStudentId ? false : Boolean(allowed) };
+
+  await db.update(tasks).set(patch).where(eq(tasks.id, taskId));
+  revalidatePath("/settings");
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+

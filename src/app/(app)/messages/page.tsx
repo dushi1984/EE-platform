@@ -5,20 +5,33 @@ import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate } from "@/lib/i18n";
 import { tt } from "@/lib/i18n-teacher";
+import { canAccessStudentPage, firstAllowedPath, getAccessPolicy } from "@/lib/access";
 import { getMessagesForUser } from "@/lib/queries-teacher";
 import { markMessageReadAction } from "@/lib/teacher-actions";
 import { TopBar } from "@/components/shell/TopBar";
 import { Avatar, Badge, Card, Icon } from "@/components/ui";
 import { DownloadButton } from "@/components/TaskSubmissionForm";
 import { StudentMessageComposer } from "@/components/StudentMessageComposer";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export const metadata: Metadata = { title: "Messages" };
 
 export default async function MessagesPage() {
-  const user = await getCurrentUser();
+  const [user, policy, { locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
   if (!user) redirect("/login");
-  const { locale } = await getI18n();
   const c = tt(locale);
+  if (user.role === "student" && !canAccessStudentPage(user, "messages", policy)) {
+    return (
+      <>
+        <TopBar title={c.messages} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
   const rows = await getMessagesForUser(user.id, user.role);
   const teacher = user.role === "teacher";
 

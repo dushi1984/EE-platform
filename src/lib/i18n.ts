@@ -160,6 +160,9 @@ export const en = {
   "auth.fullName": "Full name (four parts)",
   "auth.parentPhone": "Parent's phone number",
   "auth.phoneOrEmail": "Phone number / Email",
+  "auth.selectGrade": "Select your grade level",
+  "auth.signupPendingNote": "After signing up, you can explore preview pages & study materials right away while your teacher approves your account.",
+  "auth.exploreVisitor": "Explore as Visitor",
   "auth.code": "Code",
   "auth.codeHint": "The student code you received from the center — it becomes your Student ID.",
   "auth.password": "Password",
@@ -295,6 +298,8 @@ export const en = {
   "errors.currentPassword": "Current password is incorrect.",
   "errors.name": "Name must be at least 2 characters.",
   "errors.url": "Please enter a valid image URL.",
+  "errors.gradeRequired": "Please select your grade level.",
+  "errors.accountBlocked": "This account has been blocked by your teacher. Please contact your teacher or center.",
 } as const;
 
 export type TKey = keyof typeof en;
@@ -459,6 +464,9 @@ export const ar: Record<TKey, string> = {
   "auth.fullName": "الاسم رباعي",
   "auth.parentPhone": "رقم هاتف ولي الامر",
   "auth.phoneOrEmail": "رقم هاتف/ايميل",
+  "auth.selectGrade": "اختر الصف الدراسي",
+  "auth.signupPendingNote": "بعد التسجيل يمكنك تصفح الصفحات والمواد المتاحة فوراً لحين موافقة المعلم على حسابك.",
+  "auth.exploreVisitor": "تصفح كطالب زائر",
   "auth.code": "الكود",
   "auth.codeHint": "كود الطالب الذي حصلت عليه من المركز، وسيصبح رقم الطالب الخاص بك.",
   "auth.password": "الرقم السري",
@@ -594,6 +602,8 @@ export const ar: Record<TKey, string> = {
   "errors.currentPassword": "كلمة المرور الحالية غير صحيحة.",
   "errors.name": "يجب أن يكون الاسم حرفين على الأقل.",
   "errors.url": "من فضلك أدخل رابط صورة صحيح.",
+  "errors.gradeRequired": "من فضلك اختر الصف الدراسي.",
+  "errors.accountBlocked": "تم حظر هذا الحساب من قِبل المعلم. يرجى التواصل مع المعلم أو المركز.",
 };
 
 export const dictionaries: Record<Locale, Record<TKey, string>> = { en, ar };

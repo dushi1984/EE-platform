@@ -43,6 +43,7 @@ export function proxy(request: NextRequest) {
     "";
 
   const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-pathname", pathname);
   if (token) {
     requestHeaders.set("x-session-token", token);
     if (!cookieToken || queryToken || headerToken) {

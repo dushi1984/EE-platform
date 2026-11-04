@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { useI18n } from "@/lib/i18n-client";
 import type { TKey } from "@/lib/i18n";
+import { gradeLabel } from "@/lib/i18n-teacher";
+import { Icon } from "@/components/ui";
 
 const groupCls =
   "overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-950";
@@ -12,10 +14,28 @@ const fieldCls =
 const primaryBtn =
   "mt-5 block w-full rounded-2xl bg-blue-600 py-3.5 text-center text-lg font-bold text-white shadow-lg shadow-blue-500/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-60";
 
-export function RegisterForm({ error }: { error?: TKey }) {
-  const { t } = useI18n();
+export type GradeOption = {
+  name: string;
+  nameAr?: string;
+};
+
+const FALLBACK_GRADES: GradeOption[] = [
+  { name: "Grade 10", nameAr: "الصف الأول الثانوي" },
+  { name: "Grade 11", nameAr: "الصف الثاني الثانوي" },
+  { name: "Grade 12", nameAr: "الصف الثالث الثانوي" },
+];
+
+export function RegisterForm({
+  error,
+  levels = FALLBACK_GRADES,
+}: {
+  error?: TKey;
+  levels?: GradeOption[];
+}) {
+  const { t, locale } = useI18n();
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState(error ? t(error) : "");
+  const gradeOptions = levels.length > 0 ? levels : FALLBACK_GRADES;
 
   async function handleRegister(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -63,14 +83,78 @@ export function RegisterForm({ error }: { error?: TKey }) {
   return (
     <form action="/api/auth/register" method="post" className="mt-6" onSubmit={handleRegister}>
       <div className={groupCls}>
-        <input name="fullName" required autoComplete="name" placeholder={t("auth.fullName")} className={fieldCls} />
-        <input name="parentPhone" required inputMode="tel" autoComplete="tel" placeholder={t("auth.parentPhone")} className={fieldCls} dir="auto" />
-        <input name="contact" required autoComplete="username" placeholder={t("auth.phoneOrEmail")} className={fieldCls} dir="auto" />
-        <input name="code" required placeholder={t("auth.code")} className={fieldCls} dir="auto" />
-        <input name="password" type="password" required minLength={6} autoComplete="new-password" placeholder={t("auth.password")} className={fieldCls} dir="auto" />
-        <input name="confirmPassword" type="password" required minLength={6} autoComplete="new-password" placeholder={t("auth.confirmPassword")} className={fieldCls} dir="auto" />
+        <input
+          name="fullName"
+          required
+          autoComplete="name"
+          placeholder={t("auth.fullName")}
+          className={fieldCls}
+        />
+        <input
+          name="parentPhone"
+          required
+          inputMode="tel"
+          autoComplete="tel"
+          placeholder={t("auth.parentPhone")}
+          className={fieldCls}
+          dir="auto"
+        />
+        <input
+          name="contact"
+          required
+          autoComplete="username"
+          placeholder={t("auth.phoneOrEmail")}
+          className={fieldCls}
+          dir="auto"
+        />
+        <div className="relative border-t border-slate-300 dark:border-slate-700">
+          <select
+            name="grade"
+            required
+            defaultValue={gradeOptions[0]?.name ?? "Grade 10"}
+            aria-label={t("auth.selectGrade")}
+            className="block w-full appearance-none bg-transparent px-5 py-4 pe-11 text-base font-semibold text-slate-900 outline-none focus:bg-slate-50 dark:bg-slate-950 dark:text-white dark:focus:bg-slate-900"
+          >
+            <option value="" disabled>
+              {t("auth.selectGrade")}
+            </option>
+            {gradeOptions.map((g) => (
+              <option key={g.name} value={g.name}>
+                {locale === "ar" ? g.nameAr || gradeLabel("ar", g.name) : g.name}
+              </option>
+            ))}
+          </select>
+          <span className="pointer-events-none absolute inset-y-0 end-4 flex items-center text-slate-400">
+            <Icon name="graduation" className="h-5 w-5" />
+          </span>
+        </div>
+        <input
+          name="password"
+          type="password"
+          required
+          minLength={6}
+          autoComplete="new-password"
+          placeholder={t("auth.password")}
+          className={fieldCls}
+          dir="auto"
+        />
+        <input
+          name="confirmPassword"
+          type="password"
+          required
+          minLength={6}
+          autoComplete="new-password"
+          placeholder={t("auth.confirmPassword")}
+          className={fieldCls}
+          dir="auto"
+        />
       </div>
-      <p className="mt-2 px-1 text-xs text-slate-500 dark:text-slate-400">{t("auth.codeHint")}</p>
+
+      <div className="mt-3 flex items-start gap-2 rounded-xl bg-sky-50/90 px-3.5 py-2.5 text-xs font-medium text-navy-700 ring-1 ring-sky-200/70 dark:bg-sky-500/10 dark:text-sky-200 dark:ring-sky-400/20">
+        <Icon name="sparkles" className="mt-0.5 h-4 w-4 shrink-0 text-blue-600 dark:text-sky-300" />
+        <span>{t("auth.signupPendingNote")}</span>
+      </div>
+
       <div className="mt-3 flex justify-end">
         <Link href="/login/qr" className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
           {t("auth.loginWithQr")}
@@ -92,7 +176,13 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
   const { t } = useI18n();
   const [pending, setPending] = useState(false);
   const [remember, setRemember] = useState(true);
-  const [errorMessage, setErrorMessage] = useState(error === "invalid" ? t("errors.invalidCredentials") : "");
+  const [errorMessage, setErrorMessage] = useState(
+    error === "blocked"
+      ? t("errors.accountBlocked")
+      : error === "invalid"
+        ? t("errors.invalidCredentials")
+        : "",
+  );
 
   async function handleLogin(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -133,6 +223,12 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
           }
         }
         window.location.href = data.next || next || "/dashboard";
+        return;
+      }
+
+      if (data?.error === "blocked") {
+        setErrorMessage(t("errors.accountBlocked"));
+        setPending(false);
         return;
       }
 

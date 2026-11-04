@@ -60,6 +60,9 @@ export const users = pgTable(
     parentName: text("parent_name").notNull().default(""),
     lastLoginAt: timestamp("last_login_at", { mode: "date" }),
     role: text("role").notNull().default("student"), // "student" | "teacher"
+    accountStatus: text("account_status").notNull().default("approved"), // "approved" | "pending" | "suspended" | "blocked"
+    approvedAt: timestamp("approved_at", { mode: "date" }),
+    statusNote: text("status_note").notNull().default(""),
     sessionVersion: integer("session_version").notNull().default(0),
     notifyEmail: boolean("notify_email").notNull().default(true),
     notifySms: boolean("notify_sms").notNull().default(true),
@@ -98,6 +101,8 @@ export const materials = pgTable(
     storageBucket: text("storage_bucket").notNull().default("files"),
     storagePath: text("storage_path"),
     mimeType: text("mime_type"),
+    allowPendingStudents: boolean("allow_pending_students").notNull().default(true),
+    allowVisitors: boolean("allow_visitors").notNull().default(true),
     updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
@@ -250,6 +255,8 @@ export const tasks = pgTable(
     targetGrade: text("target_grade").notNull().default("all"), // "all" or a grade name
     targetClassId: integer("target_class_id").references(() => academicClasses.id, { onDelete: "set null" }),
     targetStudentId: integer("target_student_id").references(() => users.id, { onDelete: "cascade" }),
+    allowPendingStudents: boolean("allow_pending_students").notNull().default(false),
+    allowVisitors: boolean("allow_visitors").notNull().default(false),
     maxScore: integer("max_score").notNull().default(100),
     dueDate: timestamp("due_date", { mode: "date" }).notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
@@ -335,7 +342,36 @@ export type NotificationKind =
   | "message"
   | "material"
   | "payment"
+  | "student"
   | "system";
+
+export type AccountStatus = "approved" | "pending" | "suspended" | "blocked";
+
+export type StudentPageKey =
+  | "dashboard"
+  | "materials"
+  | "tasks"
+  | "grades"
+  | "messages"
+  | "notifications"
+  | "profile";
+
+export type VisitorPageKey = "dashboard" | "materials" | "tasks";
+
+export const accessSettings = pgTable("access_settings", {
+  id: integer("id").primaryKey().default(1),
+  pendingPages: jsonb("pending_pages")
+    .$type<StudentPageKey[]>()
+    .notNull()
+    .default(["dashboard", "materials", "messages", "notifications", "profile"]),
+  visitorPages: jsonb("visitor_pages")
+    .$type<VisitorPageKey[]>()
+    .notNull()
+    .default(["dashboard", "materials"]),
+  pendingCanSubmitTasks: boolean("pending_can_submit_tasks").notNull().default(false),
+  pendingCanPurchase: boolean("pending_can_purchase").notNull().default(false),
+  updatedAt: timestamp("updated_at", { mode: "date" }).notNull().defaultNow(),
+});
 
 export const notifications = pgTable(
   "notifications",
@@ -484,3 +520,4 @@ export type Notification = typeof notifications.$inferSelect;
 export type AcademicLevel = typeof academicLevels.$inferSelect;
 export type AcademicClass = typeof academicClasses.$inferSelect;
 export type AcademicTerm = typeof academicTerms.$inferSelect;
+export type AccessSettings = typeof accessSettings.$inferSelect;

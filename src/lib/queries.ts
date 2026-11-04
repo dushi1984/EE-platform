@@ -47,6 +47,8 @@ export type TaskRow = {
   hasSubmission: boolean;
   isPersonal: boolean;
   hasQuiz: boolean;
+  allowPendingStudents: boolean;
+  allowVisitors: boolean;
 };
 
 const DAY = 86_400_000;
@@ -86,8 +88,40 @@ export async function getTasksForUser(userId: number): Promise<TaskRow[]> {
         hasSubmission: submittedSet.has(t.id),
         isPersonal: t.targetStudentId === userId,
         hasQuiz: Boolean(t.quizQuestions && t.quizQuestions.length > 0),
+        allowPendingStudents: Boolean(t.allowPendingStudents),
+        allowVisitors: Boolean(t.allowVisitors),
       };
     });
+}
+
+export async function getVisitorTasks(): Promise<TaskRow[]> {
+  await ensureSeeded();
+  const allTasks = await db.query.tasks.findMany({
+    with: { subject: true },
+    orderBy: [asc(tasks.dueDate)],
+  });
+  const now = Date.now();
+  return allTasks
+    .filter((t) => t.targetStudentId === null && t.allowVisitors && t.status === "open")
+    .map((t) => ({
+      id: t.id,
+      title: t.title,
+      titleAr: t.titleAr,
+      description: t.description,
+      descriptionAr: t.descriptionAr,
+      dueDate: t.dueDate,
+      subject: t.subject,
+      status: "todo" as TaskStatus,
+      progress: 0,
+      overdue: t.dueDate.getTime() < now - DAY,
+      taskType: t.taskType,
+      attachmentName: t.attachmentName,
+      hasSubmission: false,
+      isPersonal: false,
+      hasQuiz: Boolean(t.quizQuestions && t.quizQuestions.length > 0),
+      allowPendingStudents: Boolean(t.allowPendingStudents),
+      allowVisitors: Boolean(t.allowVisitors),
+    }));
 }
 
 /** Split tasks into "this week" (upcoming + due within last 2 days if still active) vs "archive". */
@@ -118,6 +152,8 @@ export type MaterialCardData = {
   fileName: string | null;
   fileUrl: string | null;
   storagePath: string | null;
+  allowPendingStudents: boolean;
+  allowVisitors: boolean;
   subject: { id: number; name: string; nameAr: string; color: string; icon: string };
   purchased: boolean;
   lessonCount: number;
@@ -138,8 +174,12 @@ export async function getMaterialsForUser(userId: number): Promise<MaterialCardD
       with: { subject: true, lessons: true },
       orderBy: [desc(materials.isNew), asc(materials.id)],
     }),
-    db.select({ materialId: purchases.materialId }).from(purchases).where(eq(purchases.userId, userId)),
-    db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(eq(lessonProgress.userId, userId)),
+    userId > 0
+      ? db.select({ materialId: purchases.materialId }).from(purchases).where(eq(purchases.userId, userId))
+      : Promise.resolve([] as { materialId: number }[]),
+    userId > 0
+      ? db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(eq(lessonProgress.userId, userId))
+      : Promise.resolve([] as { lessonId: number }[]),
   ]);
   const ownedSet = new Set(owned.map((o) => o.materialId));
   const doneSet = new Set(completed.map((c) => c.lessonId));
@@ -165,6 +205,8 @@ export async function getMaterialsForUser(userId: number): Promise<MaterialCardD
         fileName: m.fileName,
         fileUrl: m.fileUrl,
         storagePath: m.storagePath,
+        allowPendingStudents: Boolean(m.allowPendingStudents),
+        allowVisitors: Boolean(m.allowVisitors),
         subject: m.subject,
         purchased,
         lessonCount,
@@ -188,6 +230,13 @@ export async function getMaterialBySlug(slug: string, userId: number) {
     },
   });
   if (!m) return null;
+  if (userId <= 0) {
+    return {
+      ...m,
+      purchased: m.priceCents === 0,
+      doneSet: new Set<number>(),
+    };
+  }
   const [owned, done, me] = await Promise.all([
     db.query.purchases.findFirst({ where: and(eq(purchases.userId, userId), eq(purchases.materialId, m.id)) }),
     db.select({ lessonId: lessonProgress.lessonId }).from(lessonProgress).where(eq(lessonProgress.userId, userId)),
@@ -331,6 +380,8 @@ export async function getTaskById(userId: number, taskId: number): Promise<TaskD
     hasSubmission: !!submission,
     isPersonal: row.targetStudentId === userId,
     hasQuiz: Boolean(row.quizQuestions && row.quizQuestions.length > 0),
+    allowPendingStudents: Boolean(row.allowPendingStudents),
+    allowVisitors: Boolean(row.allowVisitors),
     isClosed: row.status === "closed",
     maxScore: row.maxScore,
     submission: submission
@@ -346,6 +397,37 @@ export async function getTaskById(userId: number, taskId: number): Promise<TaskD
           maxScore: row.maxScore,
         }
       : null,
+  };
+}
+
+export async function getVisitorTaskById(taskId: number): Promise<TaskDetail | null> {
+  await ensureSeeded();
+  const row = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId), with: { subject: true } });
+  if (!row || row.targetStudentId !== null || !row.allowVisitors) return null;
+  return {
+    id: row.id,
+    title: row.title,
+    titleAr: row.titleAr,
+    description: row.description,
+    descriptionAr: row.descriptionAr,
+    dueDate: row.dueDate,
+    subject: row.subject,
+    status: "todo",
+    progress: 0,
+    overdue: row.dueDate.getTime() < Date.now() - DAY,
+    taskType: row.taskType,
+    attachmentName: row.attachmentName,
+    attachmentUrl: row.attachmentUrl,
+    attachmentStoragePath: row.attachmentStoragePath,
+    quizQuestions: row.quizQuestions ?? null,
+    hasSubmission: false,
+    isPersonal: false,
+    hasQuiz: Boolean(row.quizQuestions && row.quizQuestions.length > 0),
+    allowPendingStudents: Boolean(row.allowPendingStudents),
+    allowVisitors: Boolean(row.allowVisitors),
+    isClosed: row.status === "closed",
+    maxScore: row.maxScore,
+    submission: null,
   };
 }
 

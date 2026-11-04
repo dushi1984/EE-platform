@@ -49,6 +49,11 @@ export function notificationStyle(kind: string): { icon: IconName; tone: string 
         icon: "upload",
         tone: "bg-teal-100 text-teal-700 dark:bg-teal-500/20 dark:text-teal-300",
       };
+    case "student":
+      return {
+        icon: "students",
+        tone: "bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-300",
+      };
     default:
       return {
         icon: "sparkles",

@@ -4,6 +4,13 @@ import type { Metadata } from "next";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtMoney, tr } from "@/lib/i18n";
+import {
+  canAccessMaterialContent,
+  canAccessStudentPage,
+  canPurchaseMaterials,
+  firstAllowedPath,
+  getAccessPolicy,
+} from "@/lib/access";
 import { getMaterialBySlug, recordMaterialView } from "@/lib/queries";
 import { parseGoogleDriveUrl } from "@/lib/storage";
 import { PurchaseButton } from "@/components/PurchaseModal";
@@ -11,24 +18,44 @@ import { TopBar } from "@/components/shell/TopBar";
 import { Badge, Card, ForwardArrow, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 import { MaterialThumb } from "@/components/MaterialCard";
 import { DownloadButton } from "@/components/TaskSubmissionForm";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const user = await getCurrentUser();
-  if (!user) return { title: "Material" };
-  const m = await getMaterialBySlug(slug, user.id);
+  const m = await getMaterialBySlug(slug, user ? user.id : -1);
   return { title: m?.title ?? "Material" };
 }
 
 export default async function MaterialPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  const { t, locale } = await getI18n();
-  const material = await getMaterialBySlug(slug, user.id);
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
+
+  if (!user && !canAccessStudentPage(null, "materials", policy)) {
+    redirect(`/login?next=${encodeURIComponent(`/materials/${slug}`)}`);
+  }
+  if (user?.role === "student" && !canAccessStudentPage(user, "materials", policy)) {
+    return (
+      <>
+        <TopBar title={t("materials.title")} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
+
+  const material = await getMaterialBySlug(slug, user ? user.id : -1);
   if (!material) notFound();
-  if (user.role === "teacher") redirect(`/materials?m=${material.id}`);
-  await recordMaterialView(user.id, material.id);
+  if (user?.role === "teacher") redirect(`/materials?m=${material.id}`);
+  if (user) {
+    await recordMaterialView(user.id, material.id);
+  }
+
+  const canOpen = canAccessMaterialContent(user, material, policy);
+  const canPurchase = user ? canPurchaseMaterials(user, policy) : false;
 
   const title = tr(locale, material.title, material.titleAr);
   const total = material.lessons.length;
@@ -46,7 +73,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
         <div className="grid lg:grid-cols-[420px_1fr]">
           <div className="relative aspect-[2/1] lg:aspect-auto lg:min-h-[260px]">
             <MaterialThumb url={material.thumbnailUrl} title={title} />
-            {material.isNew && !material.purchased && <Badge tone="new" className="absolute start-3 top-3 shadow">{t("materials.newBadge")}</Badge>}
+            {material.isNew && !canOpen && <Badge tone="new" className="absolute start-3 top-3 shadow">{t("materials.newBadge")}</Badge>}
           </div>
           <div className="flex flex-col p-6">
             <p className="inline-flex items-center gap-2 text-sm font-semibold text-navy-500 dark:text-sky-300">
@@ -68,23 +95,25 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
             </ul>
 
             <div className="mt-6 flex flex-wrap items-center gap-4">
-              {material.purchased ? (
+              {canOpen ? (
                 <>
                   {nextLesson && (
                     <Link href={`/materials/${material.slug}/lessons/${nextLesson.id}`} className="inline-flex items-center gap-2 rounded-xl bg-navy-500 px-5 py-3 font-semibold text-white shadow hover:bg-navy-600">
                       <Icon name="play" className="h-4 w-4" />
-                      {percent === 100 ? t("materials.review") : done === 0 ? t("materials.start") : t("materials.continue")}
+                      {!user ? t("materials.open") : percent === 100 ? t("materials.review") : done === 0 ? t("materials.start") : t("materials.continue")}
                     </Link>
                   )}
-                  <div className="min-w-[200px] flex-1">
-                    <div className="mb-1 flex justify-between text-xs text-slate-500">
-                      <span>{t("materials.progress")}</span>
-                      <span>
-                        {done}/{total} · {percent}%
-                      </span>
+                  {user && (
+                    <div className="min-w-[200px] flex-1">
+                      <div className="mb-1 flex justify-between text-xs text-slate-500">
+                        <span>{t("materials.progress")}</span>
+                        <span>
+                          {done}/{total} · {percent}%
+                        </span>
+                      </div>
+                      <ProgressBar percent={percent} />
                     </div>
-                    <ProgressBar percent={percent} />
-                  </div>
+                  )}
                   {(material.storagePath || material.fileUrl) && (
                     parseGoogleDriveUrl(material.fileUrl) ? (
                       <a
@@ -103,7 +132,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
                       />
                     )
                   )}
-                  {percent === 100 && (
+                  {user && percent === 100 && (
                     <Link
                       href={`/materials/${material.slug}/certificate`}
                       className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-extrabold text-white shadow-md transition hover:opacity-90"
@@ -113,6 +142,33 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
                     </Link>
                   )}
                 </>
+              ) : !user ? (
+                <>
+                  <Link
+                    href="/register"
+                    className="inline-flex items-center gap-2 rounded-xl bg-navy-500 px-5 py-3 text-sm font-extrabold text-white shadow hover:bg-navy-600"
+                  >
+                    <Icon name="sparkles" className="h-4 w-4" />
+                    {locale === "ar" ? "أنشئ حساب طالب للفتح" : "Create Student Account to Unlock"}
+                  </Link>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-base font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    <Icon name="tag" className="h-4 w-4 text-slate-500" />
+                    {material.priceCents === 0 ? t("common.free") : fmtMoney(locale, material.priceCents)}
+                  </span>
+                </>
+              ) : !canPurchase ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="inline-flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm font-bold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                    <Icon name="lock" className="h-4 w-4" />
+                    {locale === "ar"
+                      ? "تُفتح هذه المادة بعد موافقة المعلم على حسابك"
+                      : "Unlocks once your teacher approves your account"}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-100 px-3 py-2 text-base font-bold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                    <Icon name="tag" className="h-4 w-4 text-slate-500" />
+                    {material.priceCents === 0 ? t("common.free") : fmtMoney(locale, material.priceCents)}
+                  </span>
+                </div>
               ) : (
                 <>
                   <PurchaseButton
@@ -137,7 +193,7 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
 
       <section className="space-y-3">
         <SectionTitle>{t("materials.curriculum")}</SectionTitle>
-        {!material.purchased && (
+        {!canOpen && (
           <p className="flex items-center gap-2 px-1 text-sm text-slate-600 dark:text-slate-400">
             <Icon name="lock" className="h-4 w-4" /> {t("materials.locked")}
           </p>
@@ -158,12 +214,12 @@ export default async function MaterialPage({ params }: { params: Promise<{ slug:
                       {l.questions.length > 0 && ` · ${l.questions.length} ${t("materials.quizQuestions")}`}
                     </p>
                   </div>
-                  {material.purchased ? <span className="text-xs font-semibold text-navy-500 dark:text-sky-300">{t("materials.open")} <ForwardArrow /></span> : <Icon name="lock" className="h-4 w-4 text-slate-400" />}
+                  {canOpen ? <span className="text-xs font-semibold text-navy-500 dark:text-sky-300">{t("materials.open")} <ForwardArrow /></span> : <Icon name="lock" className="h-4 w-4 text-slate-400" />}
                 </div>
               );
               return (
                 <li key={l.id} className="border-t border-slate-100 first:border-0 dark:border-slate-800">
-                  {material.purchased ? (
+                  {canOpen ? (
                     <Link href={`/materials/${material.slug}/lessons/${l.id}`} className="block hover:bg-slate-50 dark:hover:bg-slate-800/60">
                       {row}
                     </Link>

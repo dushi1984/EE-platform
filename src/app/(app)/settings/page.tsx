@@ -6,11 +6,14 @@ import { requireTeacher } from "@/lib/roles";
 import { getI18n } from "@/lib/i18n-server";
 import { tr } from "@/lib/i18n";
 import { fill, tt } from "@/lib/i18n-teacher";
+import { getAccessPolicy } from "@/lib/access";
 import {
   getAcademicClasses,
   getAcademicLevels,
   getAcademicSubjectsList,
   getAcademicTerms,
+  getTeacherMaterials,
+  getTeacherTasks,
 } from "@/lib/queries-teacher";
 import {
   createClassAction,
@@ -20,6 +23,7 @@ import {
 } from "@/lib/teacher-actions";
 import { TopBar } from "@/components/shell/TopBar";
 import { Card, Icon, SubjectBadge } from "@/components/ui";
+import { AccessControlSettings } from "@/components/teacher/AccessControlSettings";
 import {
   DeleteClassBtn,
   DeleteLevelBtn,
@@ -66,7 +70,7 @@ export default async function SettingsPage() {
   const { locale } = await getI18n();
   const c = tt(locale);
 
-  const [levels, classes, terms, subjectsList, studentCounts, classCounts, subjectUse] = await Promise.all([
+  const [levels, classes, terms, subjectsList, studentCounts, classCounts, subjectUse, accessPolicy, mats, tks] = await Promise.all([
     getAcademicLevels(),
     getAcademicClasses(),
     getAcademicTerms(),
@@ -74,6 +78,9 @@ export default async function SettingsPage() {
     db.select({ grade: users.grade, n: sql<number>`count(*)`.mapWith(Number) }).from(users).where(eq(users.role, "student")).groupBy(users.grade),
     db.select({ classId: users.classId, n: sql<number>`count(*)`.mapWith(Number) }).from(users).where(eq(users.role, "student")).groupBy(users.classId),
     db.select({ subjectId: materials.subjectId, n: sql<number>`count(*)`.mapWith(Number) }).from(materials).groupBy(materials.subjectId),
+    getAccessPolicy(),
+    getTeacherMaterials(),
+    getTeacherTasks(),
   ]);
   const studentsByGrade = new Map(studentCounts.map((r) => [r.grade, r.n]));
   const studentsByClass = new Map(classCounts.map((r) => [r.classId, r.n]));
@@ -83,6 +90,44 @@ export default async function SettingsPage() {
     <>
       <TopBar title={c.settingsTitle} />
       <p className="px-1 text-sm text-slate-600 dark:text-slate-300">{c.settingsIntro}</p>
+
+      {/* Pending Student & Visitor Access Control */}
+      <AccessControlSettings
+        locale={locale}
+        initialPolicy={accessPolicy}
+        materialsList={mats.map((m) => ({
+          id: m.id,
+          title: m.title,
+          titleAr: m.titleAr,
+          subjectName: m.subject.name,
+          subjectNameAr: m.subject.nameAr,
+          priceCents: m.priceCents,
+          published: m.published,
+          allowPendingStudents: Boolean(m.allowPendingStudents),
+          allowVisitors: Boolean(m.allowVisitors),
+        }))}
+        tasksList={tks.map((tk) => ({
+          id: tk.id,
+          title: tk.title,
+          titleAr: tk.titleAr,
+          subjectName: tk.subject.name,
+          subjectNameAr: tk.subject.nameAr,
+          targetLabel: tk.targetStudentName
+            ? `${locale === "ar" ? "خاص:" : "Student:"} ${tk.targetStudentName}`
+            : tk.targetClassName
+              ? locale === "ar"
+                ? tk.targetClassNameAr || tk.targetClassName
+                : tk.targetClassName
+              : tk.targetGrade === "all"
+                ? locale === "ar"
+                  ? "كل الصفوف"
+                  : "All Grades"
+                : tk.targetGrade,
+          isPersonal: Boolean(tk.targetStudentId),
+          allowPendingStudents: Boolean(tk.allowPendingStudents),
+          allowVisitors: Boolean(tk.allowVisitors),
+        }))}
+      />
 
       {/* Correction policy */}
       <Card className="border-2 border-blue-500/25 p-5">

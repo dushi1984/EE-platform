@@ -6,7 +6,7 @@ import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
 import { getCertificateData, getMaterialBySlug } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Logo } from "@/components/ui";
+import { Logo, SubjectBadge } from "@/components/ui";
 import { CertificateActions } from "@/components/CertificateActions";
 
 export const dynamic = "force-dynamic";
@@ -65,8 +65,9 @@ export default async function CertificatePage({ params }: { params: Promise<{ sl
 
             <p className="text-sm text-slate-500">{locale === "ar" ? "لإتمامه بنجاح كل دروس" : "for successfully completing every lesson in"}</p>
             <p className="mt-2 text-2xl font-bold text-navy-600">{title}</p>
-            <p className="mt-1 text-sm text-slate-500">
-              {data.subjectIcon} {tr(locale, data.subjectName, data.subjectNameAr)}
+            <p className="mt-1 inline-flex items-center justify-center gap-1.5 text-sm text-slate-500">
+              <SubjectBadge icon={data.subjectIcon} name={data.subjectName} size="xs" />
+              <span>{tr(locale, data.subjectName, data.subjectNameAr)}</span>
             </p>
 
             {/* Score summary */}

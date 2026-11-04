@@ -31,6 +31,8 @@ export type MaterialFormValues = {
   mimeType?: string | null;
   videoUrl: string;
   content: string;
+  allowPendingStudents?: boolean;
+  allowVisitors?: boolean;
 };
 
 type SubjectOpt = { id: number; name: string; nameAr: string; icon: string };
@@ -348,6 +350,43 @@ export function MaterialForm({
       <div>
         <label className={label}>{c.matContent}</label>
         <textarea name="content" rows={7} defaultValue={initial?.content ?? ""} className={`${field} font-mono`} />
+      </div>
+
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+        <input type="hidden" name="hasAccessFlags" value="1" />
+        <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+          {locale === "ar"
+            ? "صلاحيات المعاينة (الطلاب الجدد والزوار)"
+            : "Preview Visibility (Pending & Visitor Students)"}
+        </p>
+        <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <input
+              type="checkbox"
+              name="allowPendingStudents"
+              defaultChecked={initial ? Boolean(initial.allowPendingStudents) : true}
+              className="h-4 w-4 accent-navy-600"
+            />
+            <span>
+              {locale === "ar"
+                ? "إتاحة هذه المادة للطلاب المسجلين بانتظار موافقة المعلم"
+                : "Allow signed-up students awaiting approval"}
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <input
+              type="checkbox"
+              name="allowVisitors"
+              defaultChecked={initial ? Boolean(initial.allowVisitors) : true}
+              className="h-4 w-4 accent-navy-600"
+            />
+            <span>
+              {locale === "ar"
+                ? "إتاحة هذه المادة للطلاب الزوار (إذا كانت مجانية)"
+                : "Allow visitor students (when free)"}
+            </span>
+          </label>
+        </div>
       </div>
 
       {error && (

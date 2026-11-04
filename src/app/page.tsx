@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n, getTheme } from "@/lib/i18n-server";
 import { getMaterialsForUser } from "@/lib/queries";
+import { firstAllowedPath, getAccessPolicy } from "@/lib/access";
 import { tr } from "@/lib/i18n";
 import { Avatar, Badge, ForwardArrow, Icon, LaunchArrow, LocaleToggle, Logo, ProgressBar, SubjectBadge, SubjectGlyph, ThemeToggle, type IconName } from "@/components/ui";
 import { MaterialThumb } from "@/components/MaterialCard";
@@ -128,15 +129,18 @@ const subjects: { icon: IconName; key: "chemistry" | "physics" | "biology" | "ma
 ];
 
 export default async function HomePage() {
-  const [user, { locale, t }, theme, materials] = await Promise.all([
+  const [user, { locale, t }, theme, materials, policy] = await Promise.all([
     getCurrentUser(),
     getI18n(),
     getTheme(),
     getMaterialsForUser(-1),
+    getAccessPolicy(),
   ]);
   const c = content[locale];
   const destination = user ? "/dashboard" : "/register";
-  const materialsHref = user ? "/materials" : "/register";
+  const visitorCanBrowseMaterials = policy.visitorPages.includes("materials");
+  const visitorEntry = policy.visitorPages.length > 0 ? firstAllowedPath(null, policy) : null;
+  const materialsHref = user ? "/materials" : visitorCanBrowseMaterials ? "/materials" : "/register";
   const featured = materials.slice(0, 3);
 
   return (
@@ -176,6 +180,12 @@ export default async function HomePage() {
               <div className="mt-9 flex flex-wrap gap-3">
                 <Link href={destination} className="inline-flex items-center gap-2 rounded-xl bg-navy-500 px-6 py-3.5 text-sm font-bold text-white shadow-xl shadow-navy-500/20 transition hover:-translate-y-0.5 hover:bg-navy-600">{c.startLearning} <LaunchArrow /></Link>
                 <a href="#materials" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-6 py-3.5 text-sm font-bold text-navy-500 transition hover:border-navy-500/40 hover:bg-slate-50 dark:border-white/15 dark:bg-slate-900 dark:text-white">{c.exploreMaterials} <ForwardArrow /></a>
+                {!user && visitorEntry && (
+                  <Link href={visitorEntry} className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-5 py-3.5 text-sm font-bold text-navy-600 transition hover:bg-sky-100 dark:border-sky-800/60 dark:bg-sky-950/40 dark:text-sky-300">
+                    <Icon name="sparkles" className="h-4 w-4 text-sky-600 dark:text-sky-400" />
+                    {t("auth.exploreVisitor")}
+                  </Link>
+                )}
               </div>
               <p className="mt-7 flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400">
                 <Icon name="sparkles" className="h-4.5 w-4.5 text-emerald-500" /> {c.studentNote}
@@ -214,7 +224,7 @@ export default async function HomePage() {
         <section id="materials" className="py-20 sm:py-24">
           <div className="mx-auto max-w-7xl px-5 sm:px-8">
             <div className="flex flex-wrap items-end justify-between gap-4"><div><p className="text-xs font-extrabold uppercase tracking-[.2em] text-blue-500">{c.picksLabel}</p><h2 className="mt-3 text-3xl font-black tracking-tight text-navy-700 dark:text-white sm:text-4xl">{c.picksTitle}</h2><p className="mt-3 text-slate-600 dark:text-slate-300">{c.picksBody}</p></div><Link href={materialsHref} className="font-bold text-navy-500 hover:underline dark:text-blue-300">{c.seeAll} <ForwardArrow /></Link></div>
-            <div className="mt-9 grid gap-5 md:grid-cols-3">{featured.map((m) => <Link key={m.id} href={user ? `/materials/${m.slug}` : "/register"} className="group overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 transition hover:-translate-y-1 hover:shadow-xl dark:bg-slate-900 dark:ring-white/10"><div className="relative aspect-[16/9] overflow-hidden"><MaterialThumb url={m.thumbnailUrl} title={m.title} className="transition duration-500 group-hover:scale-105" />{m.isNew && <span className="absolute start-4 top-4 rounded-full bg-sun-400 px-3 py-1 text-xs font-bold text-navy-800">{c.new}</span>}</div><div className="p-5"><span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-300"><SubjectGlyph icon={m.subject.icon} name={m.subject.name} className="h-3.5 w-3.5" />{tr(locale, m.subject.name, m.subject.nameAr)}</span><h3 className="mt-2 text-lg font-extrabold text-navy-700 dark:text-white">{tr(locale, m.title, m.titleAr)}</h3><div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400"><span>{m.lessonCount} {c.lessons} · {m.totalMinutes} {t("common.min")}</span><LaunchArrow className="font-bold text-navy-500 dark:text-blue-300" /></div></div></Link>)}</div>
+            <div className="mt-9 grid gap-5 md:grid-cols-3">{featured.map((m) => <Link key={m.id} href={user || (visitorCanBrowseMaterials && m.allowVisitors && m.priceCents === 0) ? `/materials/${m.slug}` : "/register"} className="group overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 transition hover:-translate-y-1 hover:shadow-xl dark:bg-slate-900 dark:ring-white/10"><div className="relative aspect-[16/9] overflow-hidden"><MaterialThumb url={m.thumbnailUrl} title={m.title} className="transition duration-500 group-hover:scale-105" />{m.isNew && <span className="absolute start-4 top-4 rounded-full bg-sun-400 px-3 py-1 text-xs font-bold text-navy-800">{c.new}</span>}</div><div className="p-5"><span className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 dark:text-blue-300"><SubjectGlyph icon={m.subject.icon} name={m.subject.name} className="h-3.5 w-3.5" />{tr(locale, m.subject.name, m.subject.nameAr)}</span><h3 className="mt-2 text-lg font-extrabold text-navy-700 dark:text-white">{tr(locale, m.title, m.titleAr)}</h3><div className="mt-4 flex items-center justify-between border-t border-slate-100 pt-4 text-sm text-slate-500 dark:border-white/10 dark:text-slate-400"><span>{m.lessonCount} {c.lessons} · {m.totalMinutes} {t("common.min")}</span><LaunchArrow className="font-bold text-navy-500 dark:text-blue-300" /></div></div></Link>)}</div>
           </div>
         </section>
 

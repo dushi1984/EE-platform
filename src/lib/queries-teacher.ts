@@ -14,8 +14,10 @@ import {
   taskSubmissions,
   tasks,
   users,
+  type AccountStatus,
 } from "@/db/schema";
 import { ensureSeeded } from "@/db/seed";
+import { normalizeAccountStatus } from "@/lib/access";
 import { taskAppliesToStudent } from "@/lib/queries";
 
 const DAY = 86_400_000;
@@ -40,10 +42,15 @@ export type StudentRow = {
   parentName: string;
   parentPhone: string;
   grade: string;
+  classId: number | null;
   avatarUrl: string | null;
   lastLoginAt: Date | null;
   lastActivity: Date | null;
+  createdAt: Date;
   status: StudentStatus;
+  accountStatus: AccountStatus;
+  approvedAt: Date | null;
+  statusNote: string;
   avgGrade: number | null;
   openTasks: number;
   doneTasks: number;
@@ -88,16 +95,26 @@ export async function getStudentRows(): Promise<StudentRow[]> {
       parentName: s.parentName,
       parentPhone: s.parentPhone,
       grade: s.grade,
+      classId: s.classId,
       avatarUrl: s.avatarUrl,
       lastLoginAt: s.lastLoginAt,
       lastActivity,
+      createdAt: s.createdAt,
       status: computeStatus(lastActivity),
+      accountStatus: normalizeAccountStatus(s.accountStatus),
+      approvedAt: s.approvedAt ?? null,
+      statusNote: s.statusNote ?? "",
       avgGrade,
       openTasks,
       doneTasks,
       totalTasks,
       progressPct,
     };
+  }).sort((a, b) => {
+    const aPend = a.accountStatus === "pending" ? 0 : 1;
+    const bPend = b.accountStatus === "pending" ? 0 : 1;
+    if (aPend !== bPend) return aPend - bPend;
+    return a.id - b.id;
   });
 }
 
@@ -134,8 +151,11 @@ export async function getTeacherDashboard() {
   ]);
   const activeTasks = allTasks.filter((t) => t.status === "open").length;
   const pendingCents = allPayments.filter((p) => p.status === "pending").reduce((a, p) => a + p.amountCents, 0);
+  const pendingStudents = students.filter((s) => s.accountStatus === "pending");
   return {
     totalStudents: students.length,
+    pendingApprovals: pendingStudents.length,
+    pendingStudents,
     activeTasks,
     pendingCents,
     students,
@@ -164,6 +184,8 @@ export type TeacherTaskRow = {
   hasQuiz: boolean;
   attachmentName: string | null;
   attachmentUrl: string | null;
+  allowPendingStudents: boolean;
+  allowVisitors: boolean;
   subject: { id: number; name: string; nameAr: string; icon: string };
   submitted: number;
   total: number;
@@ -214,6 +236,8 @@ export async function getTeacherTasks(): Promise<TeacherTaskRow[]> {
       hasQuiz: Boolean(t.quizQuestions && t.quizQuestions.length > 0),
       attachmentName: t.attachmentName,
       attachmentUrl: t.attachmentUrl,
+      allowPendingStudents: Boolean(t.allowPendingStudents),
+      allowVisitors: Boolean(t.allowVisitors),
       subject: t.subject,
       submitted,
       total: inAudience.length,
@@ -353,6 +377,7 @@ export async function getStudentDetail(studentId: number) {
     student,
     fullUser,
     studentClass,
+    allClasses: classes,
     recentGrades,
     recentTasks: visible,
     messages: sentMessages,

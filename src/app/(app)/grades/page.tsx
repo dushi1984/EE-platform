@@ -3,19 +3,32 @@ import type { Metadata } from "next";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
+import { canAccessStudentPage, firstAllowedPath, getAccessPolicy } from "@/lib/access";
 import { getGradeInsights, getGradesForUser } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
 import { Badge, Card, EmptyState, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export const metadata: Metadata = { title: "Grades" };
 
 const kindTone = { quiz: "todo", exam: "in_progress", assignment: "done" } as const;
 
 export default async function GradesPage() {
-  const user = await getCurrentUser();
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
   if (!user) redirect("/login");
   if (user.role === "teacher") redirect("/dashboard");
-  const { t, locale } = await getI18n();
+  if (!canAccessStudentPage(user, "grades", policy)) {
+    return (
+      <>
+        <TopBar title={t("grades.title")} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
   const [data, insights] = await Promise.all([getGradesForUser(user.id), getGradeInsights(user.id)]);
 
   const kindLabel = (k: string) => (k === "exam" ? t("grades.type.exam") : k === "assignment" ? t("grades.type.assignment") : t("grades.type.quiz"));

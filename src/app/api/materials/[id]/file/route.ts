@@ -2,14 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { materials, purchases } from "@/db/schema";
+import { canAccessMaterialContent, getAccessPolicy } from "@/lib/access";
 import { getCurrentUser } from "@/lib/session";
 import { downloadFromFilesBucket, guessMimeType, parseGoogleDriveUrl } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse("Unauthorized", { status: 401 });
+  const [user, policy] = await Promise.all([getCurrentUser(), getAccessPolicy()]);
 
   const { id } = await params;
   const material = await db.query.materials.findFirst({
@@ -18,14 +18,20 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   });
   if (!material) return new NextResponse("Not found", { status: 404 });
 
+  if (!canAccessMaterialContent(user, material, policy)) {
+    return new NextResponse(user ? "Forbidden" : "Unauthorized", { status: user ? 403 : 401 });
+  }
+
   const owned =
-    user.role === "teacher" ||
+    user?.role === "teacher" ||
     material.priceCents === 0 ||
-    Boolean(
-      await db.query.purchases.findFirst({
-        where: and(eq(purchases.userId, user.id), eq(purchases.materialId, material.id)),
-      }),
-    );
+    (user
+      ? Boolean(
+          await db.query.purchases.findFirst({
+            where: and(eq(purchases.userId, user.id), eq(purchases.materialId, material.id)),
+          }),
+        )
+      : false);
   if (!owned) return new NextResponse("Forbidden", { status: 403 });
 
   const inline = req.nextUrl.searchParams.get("inline") === "1";
@@ -52,7 +58,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   const firstLesson = material.lessons[0];
   const body = [
     `${material.title}`,
-    `in science · ${user.fullName} (ID: ${user.studentCode})`,
+    user ? `in science · ${user.fullName} (ID: ${user.studentCode})` : "in science · Visitor Preview",
     "",
     "=".repeat(48),
     "",

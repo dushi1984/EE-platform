@@ -148,6 +148,11 @@ export async function POST(request: NextRequest) {
     ? await db.query.academicTerms.findFirst({ where: eq(academicTerms.id, termIdRaw) })
     : null;
 
+  const allowPendingStudents =
+    form.get("allowPendingStudents") === "on" || form.get("allowPendingStudents") === "true";
+  const allowVisitors =
+    !targetStudentId && (form.get("allowVisitors") === "on" || form.get("allowVisitors") === "true");
+
   const [created] = await db
     .insert(tasks)
     .values({
@@ -169,6 +174,8 @@ export async function POST(request: NextRequest) {
       targetStudentId,
       maxScore,
       termId: termExists ? termExists.id : null,
+      allowPendingStudents,
+      allowVisitors,
       status: "open",
     })
     .returning();

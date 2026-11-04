@@ -3,24 +3,36 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { lessons, purchases } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
+import { canAccessMaterialContent, getAccessPolicy } from "@/lib/access";
 import { downloadFromFilesBucket, guessMimeType, parseGoogleDriveUrl } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse("Unauthorized", { status: 401 });
+  const [user, policy] = await Promise.all([getCurrentUser(), getAccessPolicy()]);
   const { id } = await params;
-  const lesson = await db.query.lessons.findFirst({ where: eq(lessons.id, Number(id)), with: { material: true } });
+  const lesson = await db.query.lessons.findFirst({
+    where: eq(lessons.id, Number(id)),
+    with: { material: true },
+  });
   if (!lesson) return new NextResponse("Not found", { status: 404 });
 
-  const owned =
-    user.role === "teacher" ||
-    lesson.material.priceCents === 0 ||
-    (await db.query.purchases.findFirst({
-      where: and(eq(purchases.userId, user.id), eq(purchases.materialId, lesson.materialId)),
-    }));
-  if (!owned) return new NextResponse("Forbidden", { status: 403 });
+  const owned = !user
+    ? lesson.material.priceCents === 0 && Boolean(lesson.material.allowVisitors)
+    : user.role === "teacher" ||
+      lesson.material.priceCents === 0 ||
+      Boolean(
+        await db.query.purchases.findFirst({
+          where: and(eq(purchases.userId, user.id), eq(purchases.materialId, lesson.materialId)),
+        }),
+      );
+
+  if (
+    !owned ||
+    !canAccessMaterialContent(user, { ...lesson.material, purchased: Boolean(owned) }, policy)
+  ) {
+    return new NextResponse(user ? "Forbidden" : "Unauthorized", { status: user ? 403 : 401 });
+  }
 
   if (lesson.material.storagePath) {
     const cloud = await downloadFromFilesBucket(lesson.material.storagePath);
@@ -45,7 +57,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   const file = [
     `${lesson.material.title} — ${lesson.title}`,
-    `in science · ${user.fullName} (ID: ${user.studentCode})`,
+    `in science · ${user ? `${user.fullName} (ID: ${user.studentCode})` : "Visitor Preview"}`,
     "",
     "=".repeat(48),
     "",

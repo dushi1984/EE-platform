@@ -1,14 +1,27 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
+import { canAccessStudentPage, firstAllowedPath, getAccessPolicy } from "@/lib/access";
 import { getNotificationsForUser } from "@/lib/notifications";
 import { TopBar } from "@/components/shell/TopBar";
 import { NotificationsFeed } from "@/components/NotificationsFeed";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export default async function NotificationsPage() {
-  const user = await getCurrentUser();
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
   if (!user) redirect("/login");
-  const { t, locale } = await getI18n();
+  if (user.role === "student" && !canAccessStudentPage(user, "notifications", policy)) {
+    return (
+      <>
+        <TopBar title={t("notifications.title")} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
   const rows = await getNotificationsForUser(user.id, 60);
 
   return (

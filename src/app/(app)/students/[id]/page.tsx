@@ -8,7 +8,8 @@ import { gradeLabel, tt } from "@/lib/i18n-teacher";
 import { getStudentDetail, getStudentTrend } from "@/lib/queries-teacher";
 import { TopBar } from "@/components/shell/TopBar";
 import { Avatar, BackArrow, Card, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
-import { StatusPill } from "@/components/teacher/StatusPill";
+import { AccountStatusPill, StatusPill } from "@/components/teacher/StatusPill";
+import { StudentModerationControls } from "@/components/teacher/StudentModerationControls";
 import { TrendChart } from "@/components/teacher/TrendChart";
 import { StudentTaskReviewCard } from "@/components/teacher/TeacherTaskReviewControls";
 
@@ -51,7 +52,8 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
               : ""}{" "}
             · <span dir="ltr">{student.studentCode}</span>
           </p>
-          <div className="mt-3">
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+            <AccountStatusPill status={student.accountStatus} locale={locale} />
             <StatusPill status={student.status} locale={locale} />
           </div>
           <div className="mt-5 grid grid-cols-3 gap-2">
@@ -92,6 +94,23 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
         </Card>
 
         <div className="space-y-5">
+          <StudentModerationControls
+            studentId={student.id}
+            studentName={student.fullName}
+            studentGrade={student.grade}
+            currentStatus={student.accountStatus}
+            currentClassId={fullUser.classId}
+            currentNote={fullUser.statusNote}
+            classes={detail.allClasses.map((cl) => ({
+              id: cl.id,
+              name: cl.name,
+              nameAr: cl.nameAr,
+              levelName: cl.level.name,
+              levelNameAr: cl.level.nameAr,
+            }))}
+            locale={locale}
+          />
+
           <Card className="p-5">
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">{c.contactInfo}</h2>
             <dl className="mt-3 grid gap-3 sm:grid-cols-2">

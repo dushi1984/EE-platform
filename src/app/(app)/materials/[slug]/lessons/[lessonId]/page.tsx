@@ -4,18 +4,24 @@ import type { Metadata } from "next";
 import { getCurrentUser, sessionPath } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { tr } from "@/lib/i18n";
+import {
+  canAccessMaterialContent,
+  canAccessStudentPage,
+  canSubmitTasks,
+  getAccessPolicy,
+} from "@/lib/access";
 import { getMaterialBySlug } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
 import { BackArrow, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
 import { Markdown } from "@/components/Markdown";
 import { QuizRunner } from "@/components/QuizRunner";
 import { LessonFinishCheckbox, VideoPlayer } from "@/components/VideoPlayer";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string; lessonId: string }> }): Promise<Metadata> {
   const { slug, lessonId } = await params;
   const user = await getCurrentUser();
-  if (!user) return { title: "Lesson" };
-  const m = await getMaterialBySlug(slug, user.id);
+  const m = await getMaterialBySlug(slug, user ? user.id : -1);
   const l = m?.lessons.find((x) => x.id === Number(lessonId));
   return { title: l ? `${l.title} · ${m!.title}` : "Lesson" };
 }
@@ -29,12 +35,25 @@ export default async function LessonPage({
 }) {
   const { slug, lessonId } = await params;
   const { step } = await searchParams;
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  const { t, locale } = await getI18n();
-  const material = await getMaterialBySlug(slug, user.id);
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
+
+  if (!user && !canAccessStudentPage(null, "materials", policy)) {
+    redirect(`/login?next=${encodeURIComponent(`/materials/${slug}`)}`);
+  }
+  if (user?.role === "student" && !canAccessStudentPage(user, "materials", policy)) {
+    redirect(await sessionPath("/dashboard"));
+  }
+
+  const material = await getMaterialBySlug(slug, user ? user.id : -1);
   if (!material) notFound();
-  if (!material.purchased) redirect(await sessionPath(`/materials/${slug}`));
+  if (!canAccessMaterialContent(user, material, policy)) {
+    redirect(user ? await sessionPath(`/materials/${slug}`) : `/materials/${slug}`);
+  }
+  const canInteractive = Boolean(user && canSubmitTasks(user, policy));
 
   const idx = material.lessons.findIndex((l) => l.id === Number(lessonId));
   if (idx === -1) notFound();
@@ -121,13 +140,21 @@ export default async function LessonPage({
         {/* Content */}
         <article className="min-w-0 space-y-5">
           {showQuiz ? (
-            <QuizRunner
-              lessonId={lesson.id}
-              lessonTitle={lessonTitle}
-              questions={publicQuestions}
-              nextHref={next ? `/materials/${material.slug}/lessons/${next.id}` : null}
-              materialHref={`/materials/${material.slug}`}
-            />
+            canInteractive ? (
+              <QuizRunner
+                lessonId={lesson.id}
+                lessonTitle={lessonTitle}
+                questions={publicQuestions}
+                nextHref={next ? `/materials/${material.slug}/lessons/${next.id}` : null}
+                materialHref={`/materials/${material.slug}`}
+              />
+            ) : (
+              <PageAccessNotice
+                locale={locale}
+                backHref={`/materials/${material.slug}/lessons/${lesson.id}`}
+                mode={user ? "pending" : "visitor"}
+              />
+            )
           ) : (
             <>
               <div>
@@ -147,13 +174,21 @@ export default async function LessonPage({
               />
 
               <Card className="flex flex-col items-center gap-4 p-5 text-center">
-                <LessonFinishCheckbox
-                  lessonId={lesson.id}
-                  slug={material.slug}
-                  initialCompleted={completed}
-                  label={t("lesson.signFinished")}
-                />
-                {lesson.questions.length > 0 ? (
+                {user ? (
+                  <LessonFinishCheckbox
+                    lessonId={lesson.id}
+                    slug={material.slug}
+                    initialCompleted={completed}
+                    label={t("lesson.signFinished")}
+                  />
+                ) : (
+                  <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                    {locale === "ar"
+                      ? "أنشئ حساب طالب لحفظ تقدمك وحل الاختبارات التفاعلية."
+                      : "Create a student account to save lesson progress and take interactive quizzes."}
+                  </p>
+                )}
+                {lesson.questions.length > 0 && canInteractive ? (
                   <Link
                     href={`/materials/${material.slug}/lessons/${lesson.id}?step=quiz`}
                     className="rounded-xl bg-blue-500 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600"

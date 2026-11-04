@@ -46,6 +46,8 @@ export default async function NewMaterialPage({ searchParams }: { searchParams: 
         videoUrl: first?.videoUrl ?? "",
         termId: m.termId,
         content: first?.content ?? "",
+        allowPendingStudents: Boolean(m.allowPendingStudents),
+        allowVisitors: Boolean(m.allowVisitors),
       };
     }
   }

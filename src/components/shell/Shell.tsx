@@ -253,19 +253,29 @@ export function Shell({
   items,
   brand,
   signOutLabel,
+  signInLabel,
+  registerLabel,
+  isGuest = false,
+  homeHref = "/dashboard",
   menuLabel,
   initialSessionToken,
   unreadCount,
   unreadNotifications = 0,
+  pendingStudentsCount = 0,
   children,
 }: {
   items: NavItem[];
   brand: string;
   signOutLabel: string;
+  signInLabel?: string;
+  registerLabel?: string;
+  isGuest?: boolean;
+  homeHref?: string;
   menuLabel: string;
   initialSessionToken: string;
   unreadCount: number;
   unreadNotifications?: number;
+  pendingStudentsCount?: number;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
@@ -330,7 +340,7 @@ export function Shell({
             }`}
           >
             <div className={`flex items-center px-3 py-4 ${collapsed ? "lg:justify-center" : "justify-between"}`}>
-              <Link href={buildHref("/dashboard")} prefetch={false} className={`flex items-center gap-2 overflow-hidden ${collapsed ? "lg:hidden" : ""}`}>
+              <Link href={buildHref(homeHref)} prefetch={false} className={`flex items-center gap-2 overflow-hidden ${collapsed ? "lg:hidden" : ""}`}>
                 <Logo className="h-8 w-8 shrink-0 text-white" />
                 <span className="truncate text-xl font-bold tracking-tight" dir="ltr">{brand}</span>
               </Link>
@@ -354,6 +364,16 @@ export function Shell({
                   >
                     <Icon name={item.icon} className="h-5 w-5 shrink-0" />
                     <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{item.label}</span>
+                    {item.icon === "students" && pendingStudentsCount > 0 && (
+                      <span
+                        className={`ms-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-amber-400 px-1.5 text-[11px] font-extrabold leading-none text-navy-900 ${
+                          collapsed ? "lg:absolute lg:end-1.5 lg:top-1.5" : ""
+                        }`}
+                        title={`${pendingStudentsCount} pending`}
+                      >
+                        {pendingStudentsCount > 9 ? "9+" : pendingStudentsCount}
+                      </span>
+                    )}
                     {item.icon === "mail" && unread > 0 && (
                       <span
                         className={`ms-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-red-500 px-1.5 text-[11px] font-bold leading-none text-white ${
@@ -379,8 +399,33 @@ export function Shell({
               })}
             </nav>
 
-            <div className="px-2.5 pb-4 pt-2">
-              <SignOutButton label={signOutLabel} collapsed={collapsed} />
+            <div className="space-y-2 px-2.5 pb-4 pt-2">
+              {isGuest ? (
+                <>
+                  <Link
+                    href="/register"
+                    title={registerLabel || "Create account"}
+                    className={`flex w-full items-center gap-3 rounded-lg bg-sun-400 px-3 py-2.5 text-sm font-extrabold text-navy-900 shadow-sm transition hover:bg-sun-500 ${
+                      collapsed ? "lg:justify-center lg:px-0" : ""
+                    }`}
+                  >
+                    <Icon name="sparkles" className="h-5 w-5 shrink-0" />
+                    <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{registerLabel || "Create account"}</span>
+                  </Link>
+                  <Link
+                    href="/login"
+                    title={signInLabel || "Sign in"}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-white/90 transition hover:bg-white/10 hover:text-white ${
+                      collapsed ? "lg:justify-center lg:px-0" : ""
+                    }`}
+                  >
+                    <Icon name="profile" className="h-5 w-5 shrink-0" />
+                    <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{signInLabel || "Sign in"}</span>
+                  </Link>
+                </>
+              ) : (
+                <SignOutButton label={signOutLabel} collapsed={collapsed} />
+              )}
             </div>
           </aside>
 

@@ -639,6 +639,42 @@ export function AssignTaskForm({
         {fileError && <p className="mt-2 text-sm font-semibold text-red-600">{fileError}</p>}
       </div>
 
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/70 p-4 dark:border-slate-700 dark:bg-slate-800/50">
+        <p className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+          {locale === "ar"
+            ? "صلاحيات المعاينة (الطلاب قيد المراجعة والزوار)"
+            : "Preview Visibility (Pending & Visitor Students)"}
+        </p>
+        <div className="mt-2.5 grid gap-2.5 sm:grid-cols-2">
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+            <input
+              type="checkbox"
+              name="allowPendingStudents"
+              className="h-4 w-4 accent-navy-600"
+            />
+            <span>
+              {locale === "ar"
+                ? "إتاحة المهمة للطلاب المسجلين بانتظار موافقة المعلم"
+                : "Allow signed-up students awaiting approval"}
+            </span>
+          </label>
+          {!isProfileAssignment && (
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+              <input
+                type="checkbox"
+                name="allowVisitors"
+                className="h-4 w-4 accent-navy-600"
+              />
+              <span>
+                {locale === "ar"
+                  ? "إتاحة معاينة المهمة للطلاب الزوار"
+                  : "Allow visitor students to preview"}
+              </span>
+            </label>
+          )}
+        </div>
+      </div>
+
       {formError && (
         <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300">
           {formError}

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/session";
+import { canAccessTaskContent, canSubmitTasks, getAccessPolicy } from "@/lib/access";
 import {
   MAX_UPLOAD_BYTES,
   getOpenTask,
@@ -22,11 +23,15 @@ export async function POST(
   if (user.role === "teacher") {
     return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
   }
+  const policy = await getAccessPolicy();
+  if (!canSubmitTasks(user, policy)) {
+    return NextResponse.json({ ok: false, error: "approval_required" }, { status: 403 });
+  }
 
   const { id } = await params;
   const taskId = Number(id);
   const task = await getOpenTask(taskId, user);
-  if (!task) {
+  if (!task || !canAccessTaskContent(user, task, policy)) {
     return NextResponse.json({ ok: false, error: "task_not_found_or_closed" }, { status: 404 });
   }
 

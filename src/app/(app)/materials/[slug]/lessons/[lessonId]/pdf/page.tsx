@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 import { getCurrentUser, sessionPath } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { tr } from "@/lib/i18n";
+import { canAccessMaterialContent, canAccessStudentPage, getAccessPolicy } from "@/lib/access";
 import { getMaterialBySlug } from "@/lib/queries";
 import { createSignedDownloadUrl, parseGoogleDriveUrl } from "@/lib/storage";
 import { TopBar } from "@/components/shell/TopBar";
@@ -17,8 +18,7 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: { params: Promise<{ slug: string; lessonId: string }> }): Promise<Metadata> {
   const { slug, lessonId } = await params;
   const user = await getCurrentUser();
-  if (!user) return { title: "Document" };
-  const m = await getMaterialBySlug(slug, user.id);
+  const m = await getMaterialBySlug(slug, user ? user.id : -1);
   const l = m?.lessons.find((x) => x.id === Number(lessonId));
   return { title: l ? `${l.title} · Document` : "Document" };
 }
@@ -32,12 +32,24 @@ export default async function LessonPdfPage({
 }) {
   const { slug, lessonId } = await params;
   const { zoom: zoomParam } = await searchParams;
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  const { t, locale } = await getI18n();
-  const material = await getMaterialBySlug(slug, user.id);
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
+
+  if (!user && !canAccessStudentPage(null, "materials", policy)) {
+    redirect(`/login?next=${encodeURIComponent(`/materials/${slug}`)}`);
+  }
+  if (user?.role === "student" && !canAccessStudentPage(user, "materials", policy)) {
+    redirect(await sessionPath("/dashboard"));
+  }
+
+  const material = await getMaterialBySlug(slug, user ? user.id : -1);
   if (!material) notFound();
-  if (!material.purchased) redirect(await sessionPath(`/materials/${slug}`));
+  if (!canAccessMaterialContent(user, material, policy)) {
+    redirect(user ? await sessionPath(`/materials/${slug}`) : `/materials/${slug}`);
+  }
   const lesson = material.lessons.find((l) => l.id === Number(lessonId));
   if (!lesson) notFound();
 

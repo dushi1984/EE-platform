@@ -9,19 +9,31 @@ import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
 import { taskTypeLabel, tt } from "@/lib/i18n-teacher";
-import { getTaskById } from "@/lib/queries";
+import {
+  canAccessStudentPage,
+  canAccessTaskContent,
+  canSubmitTasks,
+  firstAllowedPath,
+  getAccessPolicy,
+  normalizeAccountStatus,
+} from "@/lib/access";
+import { getTaskById, getVisitorTaskById } from "@/lib/queries";
 import { parseGoogleDriveUrl } from "@/lib/storage";
 import { TopBar } from "@/components/shell/TopBar";
 import { Badge, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 import { TaskActions } from "@/components/TaskActions";
 import { TaskQuizRunner } from "@/components/TaskQuizRunner";
 import { DownloadButton, RemoveSubmissionButton, SubmissionForm } from "@/components/TaskSubmissionForm";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 import { TeacherTaskPreviewView } from "@/components/teacher/TeacherTaskPreviewView";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const user = await getCurrentUser();
-  if (!user) return { title: "Task" };
+  if (!user) {
+    const vTask = await getVisitorTaskById(Number(id));
+    return { title: vTask ? `${vTask.title} · Tasks` : "Task" };
+  }
   if (user.role === "teacher") {
     const t = await db.query.tasks.findFirst({ where: eq(tasks.id, Number(id)) });
     return { title: t ? `${t.title} · Task Preview` : "Task Preview" };
@@ -39,9 +51,13 @@ export default async function TaskDetailPage({
 }) {
   const { id } = await params;
   const sp = await searchParams;
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  if (user.role === "teacher") {
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
+
+  if (user?.role === "teacher") {
     return (
       <TeacherTaskPreviewView
         taskId={Number(id)}
@@ -51,10 +67,46 @@ export default async function TaskDetailPage({
     );
   }
 
-  const { t, locale } = await getI18n();
-  const task = await getTaskById(user.id, Number(id));
-  if (!task) notFound();
+  if (!user && !canAccessStudentPage(null, "tasks", policy)) {
+    redirect(`/login?next=${encodeURIComponent(`/tasks/${id}`)}`);
+  }
+  if (user && !canAccessStudentPage(user, "tasks", policy)) {
+    return (
+      <>
+        <TopBar title={t("tasks.title")} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
 
+  const task = user ? await getTaskById(user.id, Number(id)) : await getVisitorTaskById(Number(id));
+  if (!task) {
+    if (!user) {
+      return (
+        <>
+          <TopBar title={t("tasks.title")} />
+          <PageAccessNotice locale={locale} backHref="/tasks" mode="visitor" />
+        </>
+      );
+    }
+    notFound();
+  }
+
+  if (!canAccessTaskContent(user, task, policy)) {
+    return (
+      <>
+        <TopBar title={t("tasks.title")} />
+        <PageAccessNotice
+          locale={locale}
+          backHref="/tasks"
+          mode={user ? "pending" : "visitor"}
+        />
+      </>
+    );
+  }
+
+  const canSubmit = Boolean(user && canSubmitTasks(user, policy));
+  const accountStatus = user ? normalizeAccountStatus(user.accountStatus) : null;
   const title = tr(locale, task.title, task.titleAr);
   const driveAttachment = parseGoogleDriveUrl(task.attachmentUrl);
   const hasQuiz = Array.isArray(task.quizQuestions) && task.quizQuestions.length > 0;
@@ -88,7 +140,7 @@ export default async function TaskDetailPage({
               </Badge>
             )}
           </div>
-          <TaskActions taskId={task.id} status={task.status} progress={task.progress} />
+          {canSubmit && <TaskActions taskId={task.id} status={task.status} progress={task.progress} />}
         </div>
         <dl>
           <Row label={t("tasks.taskTitle")} value={title} bold />
@@ -129,12 +181,14 @@ export default async function TaskDetailPage({
                     {locale === "ar" ? "تم التقييم" : "Graded"} {fmtDate(locale, task.submission.gradedAt)}
                   </span>
                 )}
-                <Link
-                  href="/grades"
-                  className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300"
-                >
-                  {t("grades.title")} <ForwardArrow />
-                </Link>
+                {user && canAccessStudentPage(user, "grades", policy) && (
+                  <Link
+                    href="/grades"
+                    className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300"
+                  >
+                    {t("grades.title")} <ForwardArrow />
+                  </Link>
+                )}
               </div>
             </div>
           ) : null}
@@ -151,15 +205,17 @@ export default async function TaskDetailPage({
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <dt className="text-sm text-slate-500">{t("tasks.status")}</dt>
-            <dd className="flex items-center gap-3">
-              <ProgressBar percent={task.progress} className="w-32 sm:w-44" />
-              <Badge tone={task.overdue ? "overdue" : task.status}>
-                {task.overdue ? t("tasks.overdue") : t(`status.${task.status}`)}
-              </Badge>
-            </dd>
-          </div>
+          {user && (
+            <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <dt className="text-sm text-slate-500">{t("tasks.status")}</dt>
+              <dd className="flex items-center gap-3">
+                <ProgressBar percent={task.progress} className="w-32 sm:w-44" />
+                <Badge tone={task.overdue ? "overdue" : task.status}>
+                  {task.overdue ? t("tasks.overdue") : t(`status.${task.status}`)}
+                </Badge>
+              </dd>
+            </div>
+          )}
         </dl>
       </Card>
 
@@ -221,12 +277,37 @@ export default async function TaskDetailPage({
               {locale === "ar" ? "أسئلة الاختبار التفاعلي" : "Interactive Quiz"}
             </h2>
           </div>
-          <div className="p-5">
+          <div className="space-y-4 p-5">
+            {!canSubmit && (
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                <span>
+                  {!user
+                    ? locale === "ar"
+                      ? "يمكنك معاينة أسئلة الاختبار أدناه. أنشئ حساب طالب لتسليم إجاباتك."
+                      : "Preview the quiz questions below. Create a student account to submit your answers."
+                    : accountStatus === "suspended"
+                      ? locale === "ar"
+                        ? "تسليم الاختبارات متوقف مؤقتاً أثناء إيقاف الحساب."
+                        : "Quiz submissions are paused while your account is suspended."
+                      : locale === "ar"
+                        ? "تسليم الاختبارات يُفتح فور موافقة المعلم على حسابك."
+                        : "Quiz submissions unlock once your teacher approves your account."}
+                </span>
+                {!user && (
+                  <Link
+                    href="/register"
+                    className="rounded-lg bg-navy-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-navy-600"
+                  >
+                    {t("auth.register")}
+                  </Link>
+                )}
+              </div>
+            )}
             <TaskQuizRunner
               taskId={task.id}
               questions={task.quizQuestions!}
               maxScore={task.maxScore}
-              disabled={task.isClosed}
+              disabled={task.isClosed || !canSubmit}
             />
           </div>
         </Card>
@@ -251,15 +332,39 @@ export default async function TaskDetailPage({
                       <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{task.submission.note}</p>
                     )}
                   </div>
-                  <RemoveSubmissionButton taskId={task.id} />
+                  {canSubmit && <RemoveSubmissionButton taskId={task.id} />}
                 </div>
               </div>
             ) : null}
             <div>
-              {task.submission && (
+              {task.submission && canSubmit && (
                 <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">{t("tasks.resubmit")}</p>
               )}
-              {task.isClosed ? (
+              {!user ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-semibold text-navy-700 dark:border-sky-800 dark:bg-sky-950/40 dark:text-sky-200">
+                  <span>
+                    {locale === "ar"
+                      ? "أنشئ حساب طالب لرفع حلولك وتسليم المهام لمعلمك."
+                      : "Create a student account to upload solutions and submit tasks to your teacher."}
+                  </span>
+                  <Link
+                    href="/register"
+                    className="rounded-xl bg-navy-500 px-4 py-2 text-xs font-extrabold text-white hover:bg-navy-600"
+                  >
+                    {t("auth.register")}
+                  </Link>
+                </div>
+              ) : !canSubmit ? (
+                <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                  {accountStatus === "suspended"
+                    ? locale === "ar"
+                      ? "تسليم المهام متوقف مؤقتاً أثناء إيقاف الحساب."
+                      : "Task submissions are paused while your account is suspended."
+                    : locale === "ar"
+                      ? "يُفتح تسليم المهام فور موافقة المعلم على حسابك."
+                      : "Task submission unlocks once your teacher approves your account."}
+                </p>
+              ) : task.isClosed ? (
                 <p className="rounded-xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                   {tt(locale).taskClosedNote}
                 </p>
@@ -276,7 +381,7 @@ export default async function TaskDetailPage({
 
 function Row({ label, value, bold = false }: { label: string; value: ReactNode; bold?: boolean }) {
   return (
-    <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-3.5 last:border-0 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
+    <div className="flex flex-col gap-1 border-b border-slate-100 px-5 py-3.5 last:border-0 dark:border-slate-800 sm:flex-row sm:items-center sm:justify-between">
       <dt className="shrink-0 text-sm text-slate-500">{label}</dt>
       <dd className={`text-sm sm:max-w-[65%] sm:text-end ${bold ? "font-bold text-slate-900 dark:text-white" : "text-slate-700 dark:text-slate-200"}`}>
         {value}

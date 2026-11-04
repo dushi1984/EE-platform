@@ -3,10 +3,19 @@ import { redirect } from "next/navigation";
 import type { Metadata } from "next";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
+import {
+  canAccessMaterialContent,
+  canAccessStudentPage,
+  canPurchaseMaterials,
+  firstAllowedPath,
+  getAccessPolicy,
+  normalizeAccountStatus,
+} from "@/lib/access";
 import { getAllSubjects, getMaterialsForUser } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
 import { EmptyState, Icon, SectionTitle, SubjectGlyph } from "@/components/ui";
 import { MaterialCard } from "@/components/MaterialCard";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 import { TeacherMaterialsView } from "@/components/teacher/TeacherMaterialsView";
 
 export const metadata: Metadata = { title: "Materials" };
@@ -16,32 +25,65 @@ export default async function MaterialsPage({
 }: {
   searchParams: Promise<{ view?: string; subject?: string; q?: string; m?: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  const { view: v, subject, q, m } = await searchParams;
-  if (user.role === "teacher") return <TeacherMaterialsView selected={m} />;
-  const view = v === "list" ? "list" : "grid";
-  const { t, locale } = await getI18n();
+  const [user, policy, { view: v, subject, q, m }, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    searchParams,
+    getI18n(),
+  ]);
 
-  const [rawList, subjects] = await Promise.all([getMaterialsForUser(user.id), getAllSubjects()]);
+  if (user?.role === "teacher") return <TeacherMaterialsView selected={m} />;
+
+  if (!user && !canAccessStudentPage(null, "materials", policy)) {
+    redirect("/login?next=/materials");
+  }
+  if (user && !canAccessStudentPage(user, "materials", policy)) {
+    return (
+      <>
+        <TopBar title={t("materials.title")} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
+
+  const view = v === "list" ? "list" : "grid";
+  const [rawList, subjects] = await Promise.all([
+    getMaterialsForUser(user ? user.id : -1),
+    getAllSubjects(),
+  ]);
+
+  const viewerMode: "approved" | "pending" | "suspended" | "visitor" = !user
+    ? "visitor"
+    : normalizeAccountStatus(user.accountStatus) === "suspended"
+      ? "suspended"
+      : normalizeAccountStatus(user.accountStatus) === "pending"
+        ? "pending"
+        : "approved";
+
+  const canPurchase = user ? canPurchaseMaterials(user, policy) : false;
 
   let list = rawList;
   if (subject && subject !== "all") {
-    list = list.filter((m) => m.subject.name.toLowerCase() === subject.toLowerCase());
+    list = list.filter((mItem) => mItem.subject.name.toLowerCase() === subject.toLowerCase());
   }
   if (q && q.trim()) {
     const query = q.toLowerCase();
     list = list.filter(
-      (m) =>
-        m.title.toLowerCase().includes(query) ||
-        m.titleAr.includes(query) ||
-        m.description.toLowerCase().includes(query)
+      (mItem) =>
+        mItem.title.toLowerCase().includes(query) ||
+        mItem.titleAr.includes(query) ||
+        mItem.description.toLowerCase().includes(query),
     );
   }
 
-  const mine = list.filter((m) => m.purchased);
-  const fresh = list.filter((m) => m.isNew && !m.purchased);
-  const rest = list.filter((m) => !m.purchased && !m.isNew);
+  const withAccess = list.map((mItem) => ({
+    item: mItem,
+    canOpen: canAccessMaterialContent(user, mItem, policy),
+  }));
+
+  const mine = withAccess.filter((x) => x.canOpen);
+  const fresh = withAccess.filter((x) => x.item.isNew && !x.canOpen);
+  const rest = withAccess.filter((x) => !x.canOpen && !x.item.isNew);
 
   const gridCls = view === "list" ? "grid gap-4" : "grid gap-5 sm:grid-cols-2 xl:grid-cols-3";
 
@@ -65,7 +107,7 @@ export default async function MaterialsPage({
       <TopBar title={t("materials.title")} extra={toggle} />
 
       {/* Filter and search bar */}
-      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+      <div className="flex flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-sm">
           <Link
             href={`/materials?view=${view}${q ? `&q=${q}` : ""}`}
@@ -81,7 +123,7 @@ export default async function MaterialsPage({
             <Link
               key={s.id}
               href={`/materials?subject=${s.name.toLowerCase()}&view=${view}${q ? `&q=${q}` : ""}`}
-              className={`inline-flex items-center gap-1.5 rounded-xl px-3.5 py-2 font-semibold whitespace-nowrap transition ${
+              className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl px-3.5 py-2 font-semibold transition ${
                 subject?.toLowerCase() === s.name.toLowerCase()
                   ? "bg-navy-500 text-white shadow-md shadow-navy-500/20"
                   : "bg-white text-slate-700 hover:bg-slate-50 dark:bg-slate-900 dark:text-slate-200"
@@ -105,14 +147,23 @@ export default async function MaterialsPage({
         </form>
       </div>
 
-      {list.length === 0 && <EmptyState title={t("materials.empty")} />}
+      {withAccess.length === 0 && <EmptyState title={t("materials.empty")} />}
 
       {fresh.length > 0 && (
         <section className="space-y-4">
           <SectionTitle center>{t("materials.new")}</SectionTitle>
           <div className={gridCls}>
-            {fresh.map((m) => (
-              <MaterialCard key={m.id} material={m} locale={locale} t={t} view={view} />
+            {fresh.map(({ item, canOpen }) => (
+              <MaterialCard
+                key={item.id}
+                material={item}
+                locale={locale}
+                t={t}
+                view={view}
+                viewerMode={viewerMode}
+                canPurchase={canPurchase}
+                canOpen={canOpen}
+              />
             ))}
           </div>
         </section>
@@ -120,10 +171,25 @@ export default async function MaterialsPage({
 
       {mine.length > 0 && (
         <section className="space-y-4">
-          <SectionTitle center>{t("materials.mine")}</SectionTitle>
+          <SectionTitle center>
+            {!user
+              ? locale === "ar"
+                ? "مواد مجانية متاحة للزوار"
+                : "Open Preview Materials"
+              : t("materials.mine")}
+          </SectionTitle>
           <div className={gridCls}>
-            {mine.map((m) => (
-              <MaterialCard key={m.id} material={m} locale={locale} t={t} view={view} />
+            {mine.map(({ item, canOpen }) => (
+              <MaterialCard
+                key={item.id}
+                material={item}
+                locale={locale}
+                t={t}
+                view={view}
+                viewerMode={viewerMode}
+                canPurchase={canPurchase}
+                canOpen={canOpen}
+              />
             ))}
           </div>
         </section>
@@ -133,8 +199,17 @@ export default async function MaterialsPage({
         <section className="space-y-4">
           <SectionTitle center>{t("materials.all")}</SectionTitle>
           <div className={gridCls}>
-            {rest.map((m) => (
-              <MaterialCard key={m.id} material={m} locale={locale} t={t} view={view} />
+            {rest.map(({ item, canOpen }) => (
+              <MaterialCard
+                key={item.id}
+                material={item}
+                locale={locale}
+                t={t}
+                view={view}
+                viewerMode={viewerMode}
+                canPurchase={canPurchase}
+                canOpen={canOpen}
+              />
             ))}
           </div>
         </section>

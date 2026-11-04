@@ -3,6 +3,7 @@ import { db } from "@/db";
 import { messages, users } from "@/db/schema";
 import { eq } from "drizzle-orm";
 import { getCurrentUser } from "@/lib/session";
+import { canAccessStudentPage, getAccessPolicy, normalizeAccountStatus } from "@/lib/access";
 import { revalidatePath } from "next/cache";
 import { MAX_UPLOAD_BYTES } from "@/lib/submissions";
 import { guessMimeType, uploadBufferToFilesBucket } from "@/lib/storage";
@@ -14,6 +15,12 @@ export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+  if (user.role === "student") {
+    const policy = await getAccessPolicy();
+    if (normalizeAccountStatus(user.accountStatus) === "blocked" || !canAccessStudentPage(user, "messages", policy)) {
+      return NextResponse.json({ ok: false, error: "forbidden" }, { status: 403 });
+    }
   }
 
   let form: FormData;

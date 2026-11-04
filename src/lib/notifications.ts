@@ -66,6 +66,7 @@ export async function notifyStudentsForAudience(
       id: users.id,
       grade: users.grade,
       classId: users.classId,
+      accountStatus: users.accountStatus,
       notifyTasks: users.notifyTasks,
     })
     .from(users)
@@ -75,6 +76,7 @@ export async function notifyStudentsForAudience(
   const matching = allStudents
     .filter((s) => {
       if (!s.notifyTasks) return false;
+      if (s.accountStatus === "blocked" || s.accountStatus === "suspended") return false;
       if (audience.targetClassId) return s.classId === audience.targetClassId;
       return grade === "all" || s.grade === grade;
     })
@@ -85,11 +87,13 @@ export async function notifyStudentsForAudience(
 
 export async function notifyAllStudents(payload: NotificationPayload) {
   const allStudents = await db
-    .select({ id: users.id })
+    .select({ id: users.id, accountStatus: users.accountStatus })
     .from(users)
     .where(eq(users.role, "student"));
   await notifyUsers(
-    allStudents.map((s) => s.id),
+    allStudents
+      .filter((s) => s.accountStatus !== "blocked" && s.accountStatus !== "suspended")
+      .map((s) => s.id),
     payload,
   );
 }
