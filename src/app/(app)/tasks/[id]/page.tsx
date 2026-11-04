@@ -2,6 +2,9 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { eq } from "drizzle-orm";
+import { db } from "@/db";
+import { tasks } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
@@ -13,20 +16,41 @@ import { Badge, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle, S
 import { TaskActions } from "@/components/TaskActions";
 import { TaskQuizRunner } from "@/components/TaskQuizRunner";
 import { DownloadButton, RemoveSubmissionButton, SubmissionForm } from "@/components/TaskSubmissionForm";
+import { TeacherTaskPreviewView } from "@/components/teacher/TeacherTaskPreviewView";
 
 export async function generateMetadata({ params }: { params: Promise<{ id: string }> }): Promise<Metadata> {
   const { id } = await params;
   const user = await getCurrentUser();
   if (!user) return { title: "Task" };
+  if (user.role === "teacher") {
+    const t = await db.query.tasks.findFirst({ where: eq(tasks.id, Number(id)) });
+    return { title: t ? `${t.title} · Task Preview` : "Task Preview" };
+  }
   const task = await getTaskById(user.id, Number(id));
   return { title: task ? `${task.title} · Tasks` : "Task" };
 }
 
-export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function TaskDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ student?: string; tab?: string }>;
+}) {
   const { id } = await params;
+  const sp = await searchParams;
   const user = await getCurrentUser();
   if (!user) redirect("/login");
-  if (user.role === "teacher") redirect(`/tasks?task=${id}`);
+  if (user.role === "teacher") {
+    return (
+      <TeacherTaskPreviewView
+        taskId={Number(id)}
+        focusStudentId={sp.student ? Number(sp.student) : null}
+        tab={sp.tab}
+      />
+    );
+  }
+
   const { t, locale } = await getI18n();
   const task = await getTaskById(user.id, Number(id));
   if (!task) notFound();
@@ -56,6 +80,12 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">{t("tasks.info")}</h2>
             {task.isPersonal && (
               <Badge tone="personal">{locale === "ar" ? "مخصص لك" : "Assigned to you"}</Badge>
+            )}
+            {task.submission?.checkedAt && (
+              <Badge tone="done">
+                <Icon name="check" className="h-3 w-3" />
+                {locale === "ar" ? "تمت المراجعة" : "Checked by Teacher"}
+              </Badge>
             )}
           </div>
           <TaskActions taskId={task.id} status={task.status} progress={task.progress} />
@@ -108,6 +138,19 @@ export default async function TaskDetailPage({ params }: { params: Promise<{ id:
               </div>
             </div>
           ) : null}
+
+          {task.submission?.teacherFeedback ? (
+            <div className="border-t border-emerald-100 bg-emerald-50/70 px-5 py-4 dark:border-emerald-900/40 dark:bg-emerald-500/10">
+              <p className="flex items-center gap-1.5 text-xs font-extrabold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
+                <Icon name="check" className="h-4 w-4" />
+                {locale === "ar" ? "ملاحظات المعلم وتصحيح المهمة" : "Teacher Correction & Feedback"}
+              </p>
+              <p className="mt-1.5 whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-100">
+                {task.submission.teacherFeedback}
+              </p>
+            </div>
+          ) : null}
+
           <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <dt className="text-sm text-slate-500">{t("tasks.status")}</dt>
             <dd className="flex items-center gap-3">

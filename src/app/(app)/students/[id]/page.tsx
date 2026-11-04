@@ -4,12 +4,13 @@ import type { Metadata } from "next";
 import { requireTeacher } from "@/lib/roles";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
-import { gradeLabel, taskTypeLabel, tt } from "@/lib/i18n-teacher";
+import { gradeLabel, tt } from "@/lib/i18n-teacher";
 import { getStudentDetail, getStudentTrend } from "@/lib/queries-teacher";
 import { TopBar } from "@/components/shell/TopBar";
-import { Avatar, BackArrow, Badge, Card, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
+import { Avatar, BackArrow, Card, Icon, ProgressBar, SectionTitle, SubjectBadge } from "@/components/ui";
 import { StatusPill } from "@/components/teacher/StatusPill";
 import { TrendChart } from "@/components/teacher/TrendChart";
+import { StudentTaskReviewCard } from "@/components/teacher/TeacherTaskReviewControls";
 
 export const metadata: Metadata = { title: "Student Profile" };
 
@@ -20,7 +21,7 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
   const c = tt(locale);
   const detail = await getStudentDetail(Number(id));
   if (!detail) notFound();
-  const { student, fullUser } = detail;
+  const { student, fullUser, studentClass } = detail;
   const trend = await getStudentTrend(student.id);
   const months = trend.map((p) =>
     new Intl.DateTimeFormat(locale === "ar" ? "ar-EG" : "en-GB", { month: "short" }).format(p.date),
@@ -44,7 +45,11 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
           <Avatar name={student.fullName} src={student.avatarUrl} size={116} className="mx-auto ring-4 ring-slate-100 dark:ring-slate-800" />
           <h1 className="mt-4 text-xl font-extrabold text-slate-900 dark:text-white">{student.fullName}</h1>
           <p className="text-sm text-slate-500">
-            {gradeLabel(locale, student.grade)} · <span dir="ltr">{student.studentCode}</span>
+            {gradeLabel(locale, student.grade)}
+            {studentClass
+              ? ` · ${locale === "ar" ? studentClass.nameAr || studentClass.name : studentClass.name}`
+              : ""}{" "}
+            · <span dir="ltr">{student.studentCode}</span>
           </p>
           <div className="mt-3">
             <StatusPill status={student.status} locale={locale} />
@@ -118,79 +123,127 @@ export default async function StudentDetailPage({ params }: { params: Promise<{ 
             </div>
           </Card>
 
-          <div className="grid gap-5 xl:grid-cols-2">
-            <Card className="overflow-hidden">
-              <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
-                {c.recentGrades}
-              </h2>
-              <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                {detail.recentGrades.length === 0 && (
-                  <li className="p-6 text-center text-sm text-slate-500">{c.noRecentGrades}</li>
-                )}
-                {detail.recentGrades.map((g) => {
-                  const pct = Math.round((g.score / g.maxScore) * 100);
-                  return (
-                    <li key={g.id} className="flex items-center gap-3 px-5 py-3">
-                      <SubjectBadge icon={g.subject.icon} name={g.subject.name} size="sm" />
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">
-                          {tr(locale, g.title, g.titleAr)}
-                        </p>
-                        <p className="text-xs text-slate-500">{fmtDate(locale, g.gradedAt)}</p>
-                      </div>
-                      <span className={`font-extrabold ${pct >= 70 ? "text-green-600" : "text-red-500"}`}>{pct}%</span>
-                    </li>
-                  );
-                })}
-              </ul>
-            </Card>
-
-            <Card className="overflow-hidden">
-              <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-700">
-                <h2 className="text-lg font-bold text-slate-900 dark:text-white">{c.recentTasks}</h2>
-                <Link href={`/tasks/new?student=${student.id}`} className="text-xs font-bold text-blue-600 hover:underline dark:text-sky-400">
-                  + {c.assignTask}
-                </Link>
-              </div>
-              <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                {detail.recentTasks.length === 0 && (
-                  <li className="p-6 text-center text-sm text-slate-500">{c.noRecentTasks}</li>
-                )}
-                {detail.recentTasks.map(({ task, progress, submission, isPersonal }) => (
-                  <li key={task.id} className="flex items-center justify-between gap-3 px-5 py-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        <p className="truncate text-sm font-bold text-slate-900 dark:text-white">
-                          {tr(locale, task.title, task.titleAr)}
-                        </p>
-                        {isPersonal && (
-                          <Badge tone="personal">{locale === "ar" ? "خاص" : "Personal"}</Badge>
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-500">
-                        {taskTypeLabel(locale, task.taskType)} · {fmtDate(locale, task.dueDate)}
+          <Card className="overflow-hidden">
+            <h2 className="border-b border-slate-200 px-5 py-4 text-lg font-bold text-slate-900 dark:border-slate-700 dark:text-white">
+              {c.recentGrades}
+            </h2>
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {detail.recentGrades.length === 0 && (
+                <li className="p-6 text-center text-sm text-slate-500">{c.noRecentGrades}</li>
+              )}
+              {detail.recentGrades.map((g) => {
+                const pct = Math.round((g.score / g.maxScore) * 100);
+                return (
+                  <li key={g.id} className="flex items-center gap-3 px-5 py-3">
+                    <SubjectBadge icon={g.subject.icon} name={g.subject.name} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                        {tr(locale, g.title, g.titleAr)}
                       </p>
+                      <p className="text-xs text-slate-500">{fmtDate(locale, g.gradedAt)}</p>
                     </div>
-                    <Badge
-                      tone={
-                        submission?.score !== null && submission?.score !== undefined
-                          ? "done"
-                          : progress?.status === "done"
-                            ? "in_progress"
-                            : "todo"
-                      }
-                    >
-                      {submission?.score !== null && submission?.score !== undefined
-                        ? `${submission.score}/${task.maxScore}`
-                        : progress?.status ?? "todo"}
-                    </Badge>
+                    <span className={`font-extrabold ${pct >= 70 ? "text-green-600" : "text-red-500"}`}>{pct}%</span>
                   </li>
-                ))}
-              </ul>
-            </Card>
-          </div>
+                );
+              })}
+            </ul>
+          </Card>
         </div>
       </div>
+
+      {/* Full-Width Assigned Tasks — Preview, Manual Correction, Check & Status Control */}
+      <section className="space-y-3 pt-2">
+        <Card className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+            <div>
+              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                {locale === "ar"
+                  ? `المهام المسندة للطالب (${detail.recentTasks.length}) — معاينة وتصحيح يدوي وحالة المهمة`
+                  : `Assigned Tasks (${detail.recentTasks.length}) — Preview, Check, Correct & Change Status`}
+              </h2>
+              <p className="text-xs text-slate-500">
+                {locale === "ar"
+                  ? "عاين كل مهمة مسندة للطالب، راجع إجاباته، صحّحها يدوياً، أو غيّر حالة المهمة مباشرة."
+                  : "Preview any assigned task or quiz, inspect student work, grade manually, mark checked, or change task status."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link
+                href={`/tasks/new?student=${student.id}`}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-navy-500 px-3.5 py-2 text-xs font-bold text-white hover:bg-navy-600"
+              >
+                <Icon name="assign" className="h-4 w-4" />
+                {locale === "ar" ? "+ إسناد مهمة للطالب" : "+ Assign Personal Task"}
+              </Link>
+              <Link
+                href={`/tasks/new?student=${student.id}&type=quiz`}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-violet-700"
+              >
+                <Icon name="quiz" className="h-4 w-4" />
+                {locale === "ar" ? "+ إسناد اختبار قصير" : "+ Assign Personal Quiz"}
+              </Link>
+            </div>
+          </div>
+
+          <div className="space-y-3 p-4 sm:p-5">
+            {detail.recentTasks.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-500">{c.noRecentTasks}</p>
+            ) : (
+              detail.recentTasks.map(({ task, progress, submission, isPersonal, targetClassName, targetClassNameAr }) => {
+                const rawStatus = progress?.status;
+                const studentStatus: "todo" | "in_progress" | "done" =
+                  rawStatus === "done" || rawStatus === "in_progress"
+                    ? rawStatus
+                    : submission
+                      ? "done"
+                      : "todo";
+                return (
+                  <StudentTaskReviewCard
+                    key={task.id}
+                    item={{
+                      task: {
+                        id: task.id,
+                        title: task.title,
+                        titleAr: task.titleAr,
+                        description: task.description,
+                        descriptionAr: task.descriptionAr,
+                        taskType: task.taskType,
+                        status: task.status,
+                        maxScore: task.maxScore,
+                        dueDate: task.dueDate,
+                        attachmentName: task.attachmentName,
+                        attachmentUrl: task.attachmentUrl,
+                        quizQuestions: task.quizQuestions ?? null,
+                        subject: task.subject,
+                      },
+                      userId: student.id,
+                      studentName: student.fullName,
+                      isPersonal,
+                      targetClassName,
+                      targetClassNameAr,
+                      studentStatus,
+                      submission: submission
+                        ? {
+                            id: submission.id,
+                            fileName: submission.fileName,
+                            fileUrl: submission.fileUrl,
+                            note: submission.note,
+                            teacherFeedback: submission.teacherFeedback ?? "",
+                            checkedAt: submission.checkedAt ?? null,
+                            quizAnswers: submission.quizAnswers ?? null,
+                            submittedAt: submission.submittedAt,
+                            score: submission.score,
+                            gradedAt: submission.gradedAt,
+                          }
+                        : null,
+                    }}
+                  />
+                );
+              })
+            )}
+          </div>
+        </Card>
+      </section>
     </>
   );
 }

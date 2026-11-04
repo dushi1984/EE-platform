@@ -54,7 +54,7 @@ export async function notifyTeachers(payload: NotificationPayload) {
 }
 
 export async function notifyStudentsForAudience(
-  audience: { targetStudentId?: number | null; targetGrade?: string },
+  audience: { targetStudentId?: number | null; targetClassId?: number | null; targetGrade?: string },
   payload: NotificationPayload,
 ) {
   if (audience.targetStudentId) {
@@ -62,13 +62,22 @@ export async function notifyStudentsForAudience(
     return;
   }
   const allStudents = await db
-    .select({ id: users.id, grade: users.grade, notifyTasks: users.notifyTasks })
+    .select({
+      id: users.id,
+      grade: users.grade,
+      classId: users.classId,
+      notifyTasks: users.notifyTasks,
+    })
     .from(users)
     .where(eq(users.role, "student"));
 
   const grade = audience.targetGrade || "all";
   const matching = allStudents
-    .filter((s) => s.notifyTasks && (grade === "all" || s.grade === grade))
+    .filter((s) => {
+      if (!s.notifyTasks) return false;
+      if (audience.targetClassId) return s.classId === audience.targetClassId;
+      return grade === "all" || s.grade === grade;
+    })
     .map((s) => s.id);
 
   await notifyUsers(matching, payload);

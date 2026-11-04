@@ -341,6 +341,7 @@ export type IconName =
   | "fast-forward"
   | "maximize"
   | "reply"
+  | "eye"
   | "settings";
 
 export function Icon({ name, className = "h-5 w-5" }: { name: IconName; className?: string }) {
@@ -562,6 +563,13 @@ export function Icon({ name, className = "h-5 w-5" }: { name: IconName; classNam
         <svg {...common} className={`${className} rtl:-scale-x-100`}>
           <path d="M9 14L4 9l5-5" />
           <path d="M20 20v-7a4 4 0 00-4-4H4" />
+        </svg>
+      );
+    case "eye":
+      return (
+        <svg {...common}>
+          <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z" />
+          <circle cx="12" cy="12" r="3" />
         </svg>
       );
     case "settings":

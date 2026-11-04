@@ -19,11 +19,14 @@ import {
 import { ensureSeeded } from "@/db/seed";
 
 export function taskAppliesToStudent(
-  task: { targetStudentId: number | null; targetGrade: string },
-  student: { id: number; grade: string },
+  task: { targetStudentId?: number | null; targetClassId?: number | null; targetGrade: string },
+  student: { id: number; grade: string; classId?: number | null },
 ): boolean {
   if (task.targetStudentId !== null && task.targetStudentId !== undefined) {
     return task.targetStudentId === student.id;
+  }
+  if (task.targetClassId !== null && task.targetClassId !== undefined) {
+    return student.classId === task.targetClassId;
   }
   return task.targetGrade === "all" || task.targetGrade === student.grade;
 }
@@ -57,11 +60,12 @@ export async function getTasksForUser(userId: number): Promise<TaskRow[]> {
     db.select({ taskId: taskSubmissions.taskId }).from(taskSubmissions).where(eq(taskSubmissions.userId, userId)),
   ]);
   const myGrade = me?.grade ?? "Grade 10";
+  const myClassId = me?.classId ?? null;
   const byTask = new Map(progressRows.map((p) => [p.taskId, p]));
   const submittedSet = new Set(submissionRows.map((s) => s.taskId));
   const now = Date.now();
   return allTasks
-    .filter((t) => taskAppliesToStudent(t, { id: userId, grade: myGrade }))
+    .filter((t) => taskAppliesToStudent(t, { id: userId, grade: myGrade, classId: myClassId }))
     .filter((t) => byTask.get(t.id)?.status !== "dismissed")
     .map((t) => {
       const p = byTask.get(t.id);
@@ -284,6 +288,8 @@ export type TaskDetail = TaskRow & {
     id: number;
     fileName: string;
     note: string;
+    teacherFeedback: string;
+    checkedAt: Date | null;
     submittedAt: Date;
     score: number | null;
     gradedAt: Date | null;
@@ -332,6 +338,8 @@ export async function getTaskById(userId: number, taskId: number): Promise<TaskD
           id: submission.id,
           fileName: submission.fileName,
           note: submission.note,
+          teacherFeedback: submission.teacherFeedback ?? "",
+          checkedAt: submission.checkedAt ?? null,
           submittedAt: submission.submittedAt,
           score: submission.score,
           gradedAt: submission.gradedAt,

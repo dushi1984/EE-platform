@@ -9,10 +9,12 @@ import { taskAppliesToStudent } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getCurrentUser();
   if (!user) return new NextResponse("Unauthorized", { status: 401 });
   const { id } = await params;
+  const inline = new URL(req.url).searchParams.get("inline") === "1";
+
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, Number(id)), with: { subject: true } });
   if (!task) return new NextResponse("Not found", { status: 404 });
   if (user.role === "student" && !taskAppliesToStudent(task, user)) {
@@ -20,6 +22,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   }
 
   const name = (task.attachmentName || `task-${task.id}-attachment.txt`).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const disp = inline ? "inline" : "attachment";
 
   if (task.attachmentStoragePath) {
     const cloud = await downloadFromFilesBucket(task.attachmentStoragePath);
@@ -28,7 +31,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       return new NextResponse(new Uint8Array(cloud.buffer), {
         headers: {
           "Content-Type": mime,
-          "Content-Disposition": `attachment; filename="${name}"`,
+          "Content-Disposition": `${disp}; filename="${name}"`,
         },
       });
     }
@@ -36,7 +39,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 
   if (task.attachmentUrl) {
     const drive = parseGoogleDriveUrl(task.attachmentUrl);
-    return NextResponse.redirect(drive ? drive.downloadUrl : task.attachmentUrl);
+    return NextResponse.redirect(drive ? (inline ? drive.previewUrl : drive.downloadUrl) : task.attachmentUrl);
   }
 
   const uploaded = parseDataUrl(task.attachmentBody);
@@ -44,7 +47,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     return new NextResponse(new Uint8Array(uploaded.buffer), {
       headers: {
         "Content-Type": uploaded.mime,
-        "Content-Disposition": `attachment; filename="${name}"`,
+        "Content-Disposition": `${disp}; filename="${name}"`,
       },
     });
   }
@@ -64,7 +67,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return new NextResponse(file, {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${name}"`,
+      "Content-Disposition": `${disp}; filename="${name}"`,
     },
   });
 }

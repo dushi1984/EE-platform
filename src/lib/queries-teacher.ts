@@ -146,16 +146,24 @@ export type TeacherTaskRow = {
   id: number;
   title: string;
   titleAr: string;
+  description: string;
+  descriptionAr: string;
   taskType: string;
   dueDate: Date;
   status: string;
   maxScore: number;
   targetGrade: string;
+  targetClassId: number | null;
+  targetClassName: string | null;
+  targetClassNameAr: string | null;
   targetStudentId: number | null;
   targetStudentName: string | null;
   termId: number | null;
   termName: string | null;
   termNameAr: string | null;
+  hasQuiz: boolean;
+  attachmentName: string | null;
+  attachmentUrl: string | null;
   subject: { id: number; name: string; nameAr: string; icon: string };
   submitted: number;
   total: number;
@@ -163,22 +171,24 @@ export type TeacherTaskRow = {
 
 export async function getTeacherTasks(): Promise<TeacherTaskRow[]> {
   await ensureSeeded();
-  const [rows, students, subs, terms] = await Promise.all([
-    db.query.tasks.findMany({ with: { subject: true }, orderBy: [desc(tasks.dueDate)] }),
-    db.select({ id: users.id, fullName: users.fullName, grade: users.grade }).from(users).where(eq(users.role, "student")),
+  const [rows, students, subs, terms, classes] = await Promise.all([
+    db.query.tasks.findMany({ with: { subject: true }, orderBy: [desc(tasks.dueDate), desc(tasks.id)] }),
+    db
+      .select({ id: users.id, fullName: users.fullName, grade: users.grade, classId: users.classId })
+      .from(users)
+      .where(eq(users.role, "student")),
     db.select({ taskId: taskSubmissions.taskId, userId: taskSubmissions.userId }).from(taskSubmissions),
     db.select().from(academicTerms),
+    db.query.academicClasses.findMany({ with: { level: true } }),
   ]);
   const termById = new Map(terms.map((tm) => [tm.id, tm]));
   const studentById = new Map(students.map((s) => [s.id, s]));
+  const classById = new Map(classes.map((cl) => [cl.id, cl]));
 
   return rows.map((t) => {
     const targetStudent = t.targetStudentId ? studentById.get(t.targetStudentId) : null;
-    const inAudience = t.targetStudentId
-      ? targetStudent
-        ? [targetStudent]
-        : []
-      : students.filter((s) => t.targetGrade === "all" || s.grade === t.targetGrade);
+    const targetClass = t.targetClassId ? classById.get(t.targetClassId) : null;
+    const inAudience = students.filter((s) => taskAppliesToStudent(t, s));
     const inSet = new Set(inAudience.map((s) => s.id));
     const submitted = subs.filter((s) => s.taskId === t.id && inSet.has(s.userId)).length;
     const tm = t.termId ? termById.get(t.termId) : undefined;
@@ -186,16 +196,24 @@ export async function getTeacherTasks(): Promise<TeacherTaskRow[]> {
       id: t.id,
       title: t.title,
       titleAr: t.titleAr,
+      description: t.description,
+      descriptionAr: t.descriptionAr,
       taskType: t.taskType,
       dueDate: t.dueDate,
       status: t.status,
       maxScore: t.maxScore,
       targetGrade: t.targetGrade,
+      targetClassId: t.targetClassId,
+      targetClassName: targetClass ? `${targetClass.name} (${targetClass.level.name})` : null,
+      targetClassNameAr: targetClass ? `${targetClass.nameAr || targetClass.name} (${targetClass.level.nameAr})` : null,
       targetStudentId: t.targetStudentId,
       targetStudentName: targetStudent?.fullName ?? null,
       termId: t.termId,
       termName: tm?.name ?? null,
       termNameAr: tm?.nameAr ?? null,
+      hasQuiz: Boolean(t.quizQuestions && t.quizQuestions.length > 0),
+      attachmentName: t.attachmentName,
+      attachmentUrl: t.attachmentUrl,
       subject: t.subject,
       submitted,
       total: inAudience.length,
@@ -205,29 +223,61 @@ export async function getTeacherTasks(): Promise<TeacherTaskRow[]> {
 
 export async function getTaskSubmissionRows(taskId: number) {
   await ensureSeeded();
-  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId), with: { subject: true } });
+  const task = await db.query.tasks.findFirst({
+    where: eq(tasks.id, taskId),
+    with: {
+      subject: true,
+      targetClass: { with: { level: true } },
+      targetStudent: true,
+    },
+  });
   if (!task) return null;
-  const [allStudents, subs] = await Promise.all([
+  const [allStudents, subs, progs] = await Promise.all([
     db.select().from(users).where(eq(users.role, "student")).orderBy(asc(users.id)),
     db.select().from(taskSubmissions).where(eq(taskSubmissions.taskId, taskId)),
+    db.select().from(taskProgress).where(eq(taskProgress.taskId, taskId)),
   ]);
   const students = allStudents.filter((s) => taskAppliesToStudent(task, s));
   const subByUser = new Map(subs.map((s) => [s.userId, s]));
+  const progByUser = new Map(progs.map((p) => [p.userId, p]));
   const pastDue = task.dueDate.getTime() < Date.now();
 
   const rows = students.map((s) => {
     const sub = subByUser.get(s.id);
+    const prog = progByUser.get(s.id);
+    const rawStatus = prog?.status;
+    const studentStatus: "todo" | "in_progress" | "done" =
+      rawStatus === "done" || rawStatus === "in_progress" ? rawStatus : sub ? "done" : "todo";
+    const progress = prog?.progress ?? (studentStatus === "done" ? 100 : 0);
     const isGraded = sub?.score !== null && sub?.score !== undefined;
+    const isChecked = Boolean(sub?.checkedAt);
     const isSubmitted = !!sub;
     const isLate = (isSubmitted && sub!.submittedAt.getTime() > task.dueDate.getTime()) || (!isSubmitted && pastDue);
     const isToGrade = isSubmitted && !isGraded;
     return {
-      user: { id: s.id, fullName: s.fullName, avatarUrl: s.avatarUrl, studentCode: s.studentCode },
+      user: {
+        id: s.id,
+        fullName: s.fullName,
+        avatarUrl: s.avatarUrl,
+        studentCode: s.studentCode,
+        grade: s.grade,
+        classId: s.classId,
+      },
+      studentStatus,
+      progress,
       submissionId: sub?.id ?? null,
       fileName: sub?.fileName ?? null,
+      fileUrl: sub?.fileUrl ?? null,
+      fileStoragePath: sub?.fileStoragePath ?? null,
       note: sub?.note ?? "",
+      teacherFeedback: sub?.teacherFeedback ?? "",
+      checkedAt: sub?.checkedAt ?? null,
+      isChecked,
+      quizAnswers: sub?.quizAnswers ?? null,
       submittedAt: sub?.submittedAt ?? null,
+      gradedAt: sub?.gradedAt ?? null,
       score: sub?.score ?? null,
+      isSubmitted,
       isGraded,
       isToGrade,
       isLate,
@@ -259,10 +309,10 @@ export async function getTeacherPayments(rangeDays: number | "all" = 30) {
 }
 
 export async function getStudentDetail(studentId: number) {
-  const [rows, recentGrades, allTasks, prog, subs, fullUser, sentMessages] = await Promise.all([
+  const [rows, recentGrades, allTasks, prog, subs, fullUser, sentMessages, classes] = await Promise.all([
     getStudentRows(),
     db.query.grades.findMany({ where: eq(grades.userId, studentId), with: { subject: true }, orderBy: [desc(grades.gradedAt)], limit: 6 }),
-    db.query.tasks.findMany({ with: { subject: true }, orderBy: [desc(tasks.dueDate)] }),
+    db.query.tasks.findMany({ with: { subject: true }, orderBy: [desc(tasks.dueDate), desc(tasks.id)] }),
     db.select().from(taskProgress).where(eq(taskProgress.userId, studentId)),
     db.select().from(taskSubmissions).where(eq(taskSubmissions.userId, studentId)),
     db.query.users.findFirst({ where: eq(users.id, studentId) }),
@@ -272,21 +322,41 @@ export async function getStudentDetail(studentId: number) {
       orderBy: [desc(messages.createdAt)],
       limit: 8,
     }),
+    db.query.academicClasses.findMany({ with: { level: true } }),
   ]);
   const student = rows.find((r) => r.id === studentId);
   if (!student || !fullUser) return null;
+  const classById = new Map(classes.map((cl) => [cl.id, cl]));
+  const studentClass = fullUser.classId ? classById.get(fullUser.classId) ?? null : null;
   const pByTask = new Map(prog.map((p) => [p.taskId, p]));
   const sByTask = new Map(subs.map((s) => [s.taskId, s]));
   const visible = allTasks
     .filter((t) => taskAppliesToStudent(t, fullUser))
-    .slice(0, 8)
-    .map((t) => ({
-      task: t,
-      progress: pByTask.get(t.id) ?? null,
-      submission: sByTask.get(t.id) ?? null,
-      isPersonal: t.targetStudentId === studentId,
-    }));
-  return { student, fullUser, recentGrades, recentTasks: visible, messages: sentMessages };
+    .sort((a, b) => {
+      const aPersonal = a.targetStudentId === studentId ? 1 : 0;
+      const bPersonal = b.targetStudentId === studentId ? 1 : 0;
+      if (aPersonal !== bPersonal) return bPersonal - aPersonal;
+      return b.dueDate.getTime() - a.dueDate.getTime();
+    })
+    .map((t) => {
+      const targetClass = t.targetClassId ? classById.get(t.targetClassId) ?? null : null;
+      return {
+        task: t,
+        progress: pByTask.get(t.id) ?? null,
+        submission: sByTask.get(t.id) ?? null,
+        isPersonal: t.targetStudentId === studentId,
+        targetClassName: targetClass ? targetClass.name : null,
+        targetClassNameAr: targetClass ? targetClass.nameAr || targetClass.name : null,
+      };
+    });
+  return {
+    student,
+    fullUser,
+    studentClass,
+    recentGrades,
+    recentTasks: visible,
+    messages: sentMessages,
+  };
 }
 
 export async function getMessagesForUser(userId: number, role: string) {

@@ -16,7 +16,14 @@ import { navigateWithSession } from "@/components/shell/Shell";
 
 type SubjectOpt = { id: number; name: string; nameAr: string; icon: string };
 type TermOpt = { id: number; name: string; nameAr: string; isActive: boolean };
-type StudentOpt = { id: number; fullName: string; studentCode: string; grade: string };
+type ClassOpt = { id: number; name: string; nameAr: string; levelName: string; levelNameAr: string };
+type StudentOpt = {
+  id: number;
+  fullName: string;
+  studentCode: string;
+  grade: string;
+  avatarUrl?: string | null;
+};
 
 type DraftQuizQuestion = {
   question: string;
@@ -35,7 +42,7 @@ const emptyQuestion = (): DraftQuizQuestion => ({
 export function AssignTaskForm({
   subjects,
   grades,
-  students,
+  classes = [],
   targetStudent,
   terms,
   defaultAudience,
@@ -43,7 +50,7 @@ export function AssignTaskForm({
 }: {
   subjects: SubjectOpt[];
   grades: string[];
-  students: StudentOpt[];
+  classes?: ClassOpt[];
   targetStudent?: StudentOpt | null;
   terms: TermOpt[];
   defaultAudience: string;
@@ -53,8 +60,11 @@ export function AssignTaskForm({
   const c = tt(locale);
   const inputRef = useRef<HTMLInputElement>(null);
   const activeTerm = terms.find((tm) => tm.isActive) ?? terms[0] ?? null;
+  const isProfileAssignment = Boolean(targetStudent);
 
-  const [audience, setAudience] = useState(defaultAudience);
+  const [audience, setAudience] = useState(
+    targetStudent ? `student:${targetStudent.id}` : defaultAudience,
+  );
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [taskType, setTaskType] = useState(defaultTaskType);
@@ -80,11 +90,7 @@ export function AssignTaskForm({
   const [pending, setPending] = useState(false);
   const [statusNote, setStatusNote] = useState("");
 
-  const selectedStudent = useMemo(() => {
-    if (!audience.startsWith("student:")) return null;
-    const id = Number(audience.slice("student:".length));
-    return students.find((s) => s.id === id) ?? targetStudent ?? null;
-  }, [audience, students, targetStudent]);
+  const selectedStudent = useMemo(() => targetStudent ?? null, [targetStudent]);
 
   function onFile(f?: File) {
     setFileError("");
@@ -142,7 +148,8 @@ export function AssignTaskForm({
     setPending(true);
     try {
       const out = new FormData(e.currentTarget);
-      out.set("audience", audience);
+      out.set("audience", isProfileAssignment && targetStudent ? `student:${targetStudent.id}` : audience);
+      out.set("fromProfile", isProfileAssignment ? "1" : "0");
       out.set("title", title.trim());
       out.set("description", description.trim());
       out.set("taskType", taskType);
@@ -264,31 +271,55 @@ export function AssignTaskForm({
           <label htmlFor="task-audience" className={label}>
             {c.assignTo}
           </label>
-          <select
-            id="task-audience"
-            name="audience"
-            value={audience}
-            onChange={(e) => setAudience(e.target.value)}
-            className={field}
-          >
-            <optgroup label={locale === "ar" ? "الكل أو الصف الدراسي" : "All or Class Grade"}>
-              <option value="all">{c.allStudents}</option>
-              {grades.map((g) => (
-                <option key={g} value={g}>
-                  {gradeLabel(locale, g)}
-                </option>
-              ))}
-            </optgroup>
-            {students.length > 0 && (
-              <optgroup label={locale === "ar" ? "طالب محدد (مهمة خاصة)" : "Specific Student (Personal)"}>
-                {students.map((s) => (
-                  <option key={s.id} value={`student:${s.id}`}>
-                    {s.fullName} ({s.studentCode} · {gradeLabel(locale, s.grade)})
-                  </option>
-                ))}
-              </optgroup>
-            )}
-          </select>
+          {isProfileAssignment && selectedStudent ? (
+            <div className="flex items-center gap-3 rounded-xl border border-violet-300 bg-violet-50/70 px-4 py-2.5 dark:border-violet-500/40 dark:bg-violet-500/10">
+              <Avatar name={selectedStudent.fullName} src={selectedStudent.avatarUrl} size={34} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-bold text-slate-900 dark:text-white">
+                  {selectedStudent.fullName}
+                </p>
+                <p className="text-xs text-slate-500" dir="ltr">
+                  #{selectedStudent.studentCode} · {gradeLabel(locale, selectedStudent.grade)}
+                </p>
+              </div>
+              <input type="hidden" name="audience" value={`student:${selectedStudent.id}`} />
+            </div>
+          ) : (
+            <>
+              <select
+                id="task-audience"
+                name="audience"
+                value={audience}
+                onChange={(e) => setAudience(e.target.value)}
+                className={field}
+              >
+                <option value="all">{c.allStudents}</option>
+                {classes.length > 0 && (
+                  <optgroup label={locale === "ar" ? "الفصول الدراسية" : "Classes"}>
+                    {classes.map((cl) => (
+                      <option key={cl.id} value={`class:${cl.id}`}>
+                        {locale === "ar"
+                          ? `${cl.nameAr} (${cl.levelNameAr})`
+                          : `${cl.name} (${cl.levelName})`}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                <optgroup label={locale === "ar" ? "الصفوف الدراسية" : "Grade Levels"}>
+                  {grades.map((g) => (
+                    <option key={g} value={g}>
+                      {gradeLabel(locale, g)}
+                    </option>
+                  ))}
+                </optgroup>
+              </select>
+              <p className="mt-1.5 text-xs text-slate-500">
+                {locale === "ar"
+                  ? "لإسناد مهمة لطالب محدد بمفرده، افتح ملفه الشخصي من صفحة الطلاب."
+                  : "To assign a personal task to one specific student, use their Student Profile."}
+              </p>
+            </>
+          )}
         </div>
 
         <div>

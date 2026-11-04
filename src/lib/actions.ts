@@ -522,6 +522,7 @@ export async function submitTaskQuizAction(taskId: number, answers: Record<numbe
       taskId: task.id,
       fileName: "online-quiz-attempt.txt",
       note: `Online Quiz: ${correctCount}/${total} correct (${scaledScore}/${task.maxScore})`,
+      quizAnswers: answers,
       score: scaledScore,
       gradedAt: now,
       submittedAt: now,
@@ -531,6 +532,7 @@ export async function submitTaskQuizAction(taskId: number, answers: Record<numbe
       set: {
         fileName: "online-quiz-attempt.txt",
         note: `Online Quiz: ${correctCount}/${total} correct (${scaledScore}/${task.maxScore})`,
+        quizAnswers: answers,
         score: scaledScore,
         gradedAt: now,
         submittedAt: now,

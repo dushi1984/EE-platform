@@ -69,13 +69,29 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
   if (fileData.length > 3_000_000) return { error: c.fileTooBig };
 
   let targetGrade = "all";
+  let targetClassId: number | null = null;
   let targetStudentId: number | null = null;
+  const fromProfile = str(fd, "fromProfile") === "1";
+
   if (audience.startsWith("student:")) {
+    if (!fromProfile) return { error: c.assignTask };
     const sid = Number(audience.slice("student:".length));
     const st = sid ? await db.query.users.findFirst({ where: eq(users.id, sid) }) : null;
     if (st && st.role === "student") {
       targetStudentId = st.id;
       targetGrade = st.grade;
+    }
+  } else if (audience.startsWith("class:")) {
+    const cid = Number(audience.slice("class:".length));
+    const cls = cid
+      ? await db.query.academicClasses.findFirst({
+          where: eq(academicClasses.id, cid),
+          with: { level: true },
+        })
+      : null;
+    if (cls) {
+      targetClassId = cls.id;
+      targetGrade = cls.level.name;
     }
   } else {
     const knownLevels = await db.select().from(academicLevels);
@@ -96,13 +112,14 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
       attachmentBody: fileName && fileData ? fileData : "",
       dueDate: due,
       targetGrade,
+      targetClassId,
       targetStudentId,
       status: "open",
     })
     .returning();
 
   await notifyStudentsForAudience(
-    { targetStudentId, targetGrade },
+    { targetStudentId, targetClassId, targetGrade },
     {
       kind: taskType === "quiz" ? "quiz" : "task",
       title: targetStudentId ? `Assigned to you: ${title}` : `New ${taskType}: ${title}`,
@@ -114,11 +131,14 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
   ).catch(() => {});
 
   revalidatePath("/tasks");
+  revalidatePath(`/tasks/${created.id}`);
   revalidatePath("/dashboard");
   if (targetStudentId) revalidatePath(`/students/${targetStudentId}`);
   return {
     success: c.assignTask,
-    redirectTo: await sessionPath(`/tasks?task=${created.id}`),
+    redirectTo: await sessionPath(
+      targetStudentId ? `/tasks/${created.id}?student=${targetStudentId}` : `/tasks?task=${created.id}`,
+    ),
   };
 }
 
@@ -133,7 +153,215 @@ export async function toggleTaskStatusAction(fd: FormData) {
     .where(eq(tasks.id, id));
   revalidatePath("/tasks");
   revalidatePath(`/tasks/${id}`);
+  revalidatePath("/students");
+  if (task.targetStudentId) revalidatePath(`/students/${task.targetStudentId}`);
   revalidatePath("/dashboard");
+}
+
+export async function setTaskOpenStatusAction(taskId: number, nextStatus: "open" | "closed") {
+  await requireTeacher();
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!task) return { ok: false };
+  const status = nextStatus === "closed" ? "closed" : "open";
+  await db.update(tasks).set({ status }).where(eq(tasks.id, taskId));
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/students");
+  if (task.targetStudentId) revalidatePath(`/students/${task.targetStudentId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, status };
+}
+
+export async function setStudentTaskStatusAction(
+  taskId: number,
+  userId: number,
+  status: "todo" | "in_progress" | "done",
+) {
+  await requireTeacher();
+  const cleanStatus: "todo" | "in_progress" | "done" =
+    status === "done" || status === "in_progress" ? status : "todo";
+  const progress = cleanStatus === "done" ? 100 : cleanStatus === "in_progress" ? 50 : 0;
+  const now = new Date();
+
+  await db
+    .insert(taskProgress)
+    .values({ userId, taskId, status: cleanStatus, progress, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [taskProgress.userId, taskProgress.taskId],
+      set: { status: cleanStatus, progress, updatedAt: now },
+    });
+
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/students");
+  revalidatePath(`/students/${userId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, status: cleanStatus, progress };
+}
+
+export async function toggleSubmissionCheckedAction(taskId: number, userId: number, checked: boolean) {
+  await requireTeacher();
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!task) return { ok: false };
+  const now = new Date();
+
+  const sub = await db.query.taskSubmissions.findFirst({
+    where: and(eq(taskSubmissions.taskId, taskId), eq(taskSubmissions.userId, userId)),
+  });
+
+  if (sub) {
+    await db
+      .update(taskSubmissions)
+      .set({ checkedAt: checked ? now : null })
+      .where(eq(taskSubmissions.id, sub.id));
+  } else if (checked) {
+    await db.insert(taskSubmissions).values({
+      userId,
+      taskId,
+      fileName: `checked-task-${taskId}.txt`,
+      note: "Checked manually by instructor",
+      checkedAt: now,
+      submittedAt: now,
+    });
+  }
+
+  if (checked) {
+    await db
+      .insert(taskProgress)
+      .values({ userId, taskId, status: "done", progress: 100, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [taskProgress.userId, taskProgress.taskId],
+        set: { status: "done", progress: 100, updatedAt: now },
+      });
+
+    await notifyUsers([userId], {
+      kind: "task",
+      title: `Task checked: ${task.title}`,
+      titleAr: `تمت مراجعة مهمتك: ${task.titleAr || task.title}`,
+      body: "Your instructor checked your work.",
+      bodyAr: "قام المعلم بمراجعة عملك وتأكيده.",
+      href: `/tasks/${taskId}`,
+    }).catch(() => {});
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/students");
+  revalidatePath(`/students/${userId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, checked };
+}
+
+export async function reviewStudentTaskAction(input: {
+  taskId: number;
+  userId: number;
+  score: number | null;
+  teacherFeedback: string;
+  checked: boolean;
+  studentStatus: "todo" | "in_progress" | "done";
+}) {
+  await requireTeacher();
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, input.taskId) });
+  if (!task) return { ok: false };
+  const now = new Date();
+
+  const hasScore = input.score !== null && input.score !== undefined && Number.isFinite(input.score);
+  const clampedScore = hasScore ? Math.min(task.maxScore, Math.max(0, Math.round(Number(input.score)))) : null;
+  const feedback = (input.teacherFeedback || "").trim().slice(0, 2000);
+  const finalStatus: "todo" | "in_progress" | "done" =
+    input.studentStatus === "done" || input.studentStatus === "in_progress" ? input.studentStatus : "todo";
+  const progress = finalStatus === "done" ? 100 : finalStatus === "in_progress" ? 50 : 0;
+
+  await db
+    .insert(taskProgress)
+    .values({ userId: input.userId, taskId: task.id, status: finalStatus, progress, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [taskProgress.userId, taskProgress.taskId],
+      set: { status: finalStatus, progress, updatedAt: now },
+    });
+
+  const sub = await db.query.taskSubmissions.findFirst({
+    where: and(eq(taskSubmissions.taskId, task.id), eq(taskSubmissions.userId, input.userId)),
+  });
+
+  if (sub) {
+    await db
+      .update(taskSubmissions)
+      .set({
+        score: clampedScore !== null ? clampedScore : sub.score,
+        gradedAt: clampedScore !== null ? now : sub.gradedAt,
+        teacherFeedback: feedback,
+        checkedAt: input.checked ? sub.checkedAt ?? now : null,
+      })
+      .where(eq(taskSubmissions.id, sub.id));
+  } else if (clampedScore !== null || feedback || input.checked) {
+    await db.insert(taskSubmissions).values({
+      userId: input.userId,
+      taskId: task.id,
+      fileName: `manual-review-task-${task.id}.txt`,
+      note: "Reviewed manually by instructor",
+      score: clampedScore,
+      gradedAt: clampedScore !== null ? now : null,
+      teacherFeedback: feedback,
+      checkedAt: input.checked ? now : null,
+      submittedAt: now,
+    });
+  }
+
+  if (clampedScore !== null) {
+    const existing = await db.query.grades.findFirst({
+      where: and(eq(grades.userId, input.userId), eq(grades.taskId, task.id)),
+    });
+    if (existing) {
+      await db
+        .update(grades)
+        .set({ score: clampedScore, maxScore: task.maxScore, gradedAt: now })
+        .where(eq(grades.id, existing.id));
+    } else {
+      await db.insert(grades).values({
+        userId: input.userId,
+        subjectId: task.subjectId,
+        taskId: task.id,
+        title: task.title,
+        titleAr: task.titleAr,
+        kind: task.taskType === "quiz" ? "quiz" : "assignment",
+        score: clampedScore,
+        maxScore: task.maxScore,
+        gradedAt: now,
+      });
+    }
+  }
+
+  if (clampedScore !== null || feedback || input.checked) {
+    await notifyUsers([input.userId], {
+      kind: clampedScore !== null ? "grade" : "task",
+      title:
+        clampedScore !== null
+          ? `Task corrected & graded: ${task.title}`
+          : `Task checked by teacher: ${task.title}`,
+      titleAr:
+        clampedScore !== null
+          ? `تم تصحيح وتقييم مهمتك: ${task.titleAr || task.title}`
+          : `تمت مراجعة مهمتك: ${task.titleAr || task.title}`,
+      body:
+        clampedScore !== null
+          ? `Score: ${clampedScore}/${task.maxScore}${feedback ? ` — "${feedback.slice(0, 120)}"` : ""}`
+          : feedback || "Your instructor reviewed your task.",
+      bodyAr:
+        clampedScore !== null
+          ? `الدرجة: ${clampedScore}/${task.maxScore}${feedback ? ` — "${feedback.slice(0, 120)}"` : ""}`
+          : feedback || "قام المعلم بمراجعة مهمتك.",
+      href: `/tasks/${task.id}`,
+    }).catch(() => {});
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${task.id}`);
+  revalidatePath("/students");
+  revalidatePath(`/students/${input.userId}`);
+  revalidatePath("/grades");
+  revalidatePath("/dashboard");
+  return { ok: true, score: clampedScore, checked: input.checked, status: finalStatus };
 }
 
 export async function gradeSubmissionAction(taskId: number, userId: number, score: number) {

@@ -248,12 +248,17 @@ export const tasks = pgTable(
     status: text("status").notNull().default("open"), // open | closed
     termId: integer("term_id"),
     targetGrade: text("target_grade").notNull().default("all"), // "all" or a grade name
+    targetClassId: integer("target_class_id").references(() => academicClasses.id, { onDelete: "set null" }),
     targetStudentId: integer("target_student_id").references(() => users.id, { onDelete: "cascade" }),
     maxScore: integer("max_score").notNull().default(100),
     dueDate: timestamp("due_date", { mode: "date" }).notNull(),
     createdAt: timestamp("created_at", { mode: "date" }).notNull().defaultNow(),
   },
-  (t) => [index("tasks_due_idx").on(t.dueDate), index("tasks_target_student_idx").on(t.targetStudentId)],
+  (t) => [
+    index("tasks_due_idx").on(t.dueDate),
+    index("tasks_target_student_idx").on(t.targetStudentId),
+    index("tasks_target_class_idx").on(t.targetClassId),
+  ],
 );
 
 export const taskProgress = pgTable(
@@ -289,6 +294,9 @@ export const taskSubmissions = pgTable(
     fileUrl: text("file_url"),
     fileStoragePath: text("file_storage_path"),
     fileMime: text("file_mime"),
+    teacherFeedback: text("teacher_feedback").notNull().default(""),
+    checkedAt: timestamp("checked_at", { mode: "date" }),
+    quizAnswers: jsonb("quiz_answers").$type<Record<number, number> | null>(),
     score: integer("score"),
     gradedAt: timestamp("graded_at", { mode: "date" }),
     submittedAt: timestamp("submitted_at", { mode: "date" }).notNull().defaultNow(),
@@ -416,6 +424,7 @@ export const quizQuestionsRelations = relations(quizQuestions, ({ one }) => ({
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
   subject: one(subjects, { fields: [tasks.subjectId], references: [subjects.id] }),
+  targetClass: one(academicClasses, { fields: [tasks.targetClassId], references: [academicClasses.id] }),
   targetStudent: one(users, { fields: [tasks.targetStudentId], references: [users.id] }),
   progress: many(taskProgress),
   submissions: many(taskSubmissions),

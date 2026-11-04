@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { academicLevels, academicTerms, tasks, users, type TaskQuizQuestion } from "@/db/schema";
+import { academicClasses, academicLevels, academicTerms, tasks, users, type TaskQuizQuestion } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
 import { GRADES, TASK_TYPES } from "@/lib/i18n-teacher";
 import { MAX_UPLOAD_BYTES } from "@/lib/submissions";
@@ -28,12 +28,14 @@ export async function POST(request: NextRequest) {
   const titleAr = String(form.get("titleAr") ?? "").trim() || title;
   const description = String(form.get("description") ?? "").trim();
   const audience = String(form.get("audience") ?? "all").trim();
+  const fromProfile = String(form.get("fromProfile") ?? "") === "1";
   const taskType = String(form.get("taskType") ?? "assignment").trim();
   const dueRaw = String(form.get("dueDate") ?? "").trim();
   const subjectId = Number(form.get("subjectId")) || 1;
   const termIdRaw = Number(form.get("termId")) || null;
   const maxScoreRaw = Number(form.get("maxScore"));
-  const maxScore = Number.isFinite(maxScoreRaw) && maxScoreRaw >= 1 && maxScoreRaw <= 1000 ? Math.round(maxScoreRaw) : 100;
+  const maxScore =
+    Number.isFinite(maxScoreRaw) && maxScoreRaw >= 1 && maxScoreRaw <= 1000 ? Math.round(maxScoreRaw) : 100;
 
   if (title.length < 3) {
     return NextResponse.json({ ok: false, error: "title_short" }, { status: 400 });
@@ -105,11 +107,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  // Resolve audience: specific student (`student:<id>`), grade level, or all students
+  // Resolve audience:
+  // - Specific student (`student:<id>`) is ONLY permitted when initiated from that student's profile (`fromProfile=1`).
+  // - From the Tasks page, teachers assign to classes (`class:<id>`), grade levels, or all students (`all`).
   let targetGrade = "all";
+  let targetClassId: number | null = null;
   let targetStudentId: number | null = null;
 
   if (audience.startsWith("student:")) {
+    if (!fromProfile) {
+      return NextResponse.json({ ok: false, error: "student_profile_only" }, { status: 400 });
+    }
     const sid = Number(audience.slice("student:".length));
     const student = sid ? await db.query.users.findFirst({ where: eq(users.id, sid) }) : null;
     if (!student || student.role !== "student") {
@@ -117,6 +125,19 @@ export async function POST(request: NextRequest) {
     }
     targetStudentId = student.id;
     targetGrade = student.grade;
+  } else if (audience.startsWith("class:")) {
+    const cid = Number(audience.slice("class:".length));
+    const cls = cid
+      ? await db.query.academicClasses.findFirst({
+          where: eq(academicClasses.id, cid),
+          with: { level: true },
+        })
+      : null;
+    if (!cls) {
+      return NextResponse.json({ ok: false, error: "class_not_found" }, { status: 404 });
+    }
+    targetClassId = cls.id;
+    targetGrade = cls.level.name;
   } else {
     const knownLevels = await db.select().from(academicLevels);
     const validGrades = new Set<string>([...GRADES, ...knownLevels.map((l) => l.name)]);
@@ -144,6 +165,7 @@ export async function POST(request: NextRequest) {
       quizQuestions,
       dueDate: due,
       targetGrade,
+      targetClassId,
       targetStudentId,
       maxScore,
       termId: termExists ? termExists.id : null,
@@ -153,7 +175,7 @@ export async function POST(request: NextRequest) {
 
   const isQuiz = taskType === "quiz";
   await notifyStudentsForAudience(
-    { targetStudentId, targetGrade },
+    { targetStudentId, targetClassId, targetGrade },
     {
       kind: isQuiz ? "quiz" : "task",
       title: targetStudentId
@@ -177,9 +199,10 @@ export async function POST(request: NextRequest) {
   ).catch(() => {});
 
   revalidatePath("/tasks");
+  revalidatePath(`/tasks/${created.id}`);
   revalidatePath("/dashboard");
   if (targetStudentId) {
     revalidatePath(`/students/${targetStudentId}`);
   }
-  return NextResponse.json({ ok: true, taskId: created.id, targetStudentId });
+  return NextResponse.json({ ok: true, taskId: created.id, targetStudentId, targetClassId });
 }
