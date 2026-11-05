@@ -257,10 +257,6 @@ export function StudentTaskReviewCard({
   const hasQuiz = Array.isArray(task.quizQuestions) && task.quizQuestions.length > 0;
   const quizAnswers = submission?.quizAnswers ?? null;
 
-  const openInlinePreview = (url: string) => {
-    window.open(withSessionQuery(url), "_blank", "noopener,noreferrer");
-  };
-
   const handleSaveCorrection = (e: React.FormEvent) => {
     e.preventDefault();
     startTransition(async () => {
@@ -383,14 +379,19 @@ export function StudentTaskReviewCard({
               </p>
               {(task.attachmentName || task.attachmentUrl) && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openInlinePreview(`/api/tasks/${task.id}/attachment?inline=1`)}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 dark:bg-sky-500/15 dark:text-sky-300"
+                  <a
+                    href={`/api/tasks/${task.id}/attachment?inline=1`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-no-bridge="1"
+                    onClick={(e) => {
+                      e.currentTarget.href = withSessionQuery(`/api/tasks/${task.id}/attachment?inline=1`);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 dark:bg-sky-500/15 dark:text-sky-300"
                   >
                     <Icon name="eye" className="h-3.5 w-3.5" />
                     {locale === "ar" ? "معاينة مرفق المهمة" : "Preview Attachment"}
-                  </button>
+                  </a>
                   <DownloadButton
                     url={`/api/tasks/${task.id}/attachment`}
                     label={locale === "ar" ? "تنزيل" : "Download"}
@@ -483,14 +484,19 @@ export function StudentTaskReviewCard({
               </p>
               {submission && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => openInlinePreview(`/api/submissions/${submission.id}/download?inline=1`)}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 dark:bg-sky-500/15 dark:text-sky-300"
+                  <a
+                    href={`/api/submissions/${submission.id}/download?inline=1`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-no-bridge="1"
+                    onClick={(e) => {
+                      e.currentTarget.href = withSessionQuery(`/api/submissions/${submission.id}/download?inline=1`);
+                    }}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-blue-50 px-3 py-1.5 text-xs font-bold text-blue-700 hover:bg-blue-100 dark:bg-sky-500/15 dark:text-sky-300"
                   >
                     <Icon name="eye" className="h-3.5 w-3.5" />
                     {locale === "ar" ? "معاينة ملف الطالب" : "Preview File"}
-                  </button>
+                  </a>
                   <DownloadButton
                     url={`/api/submissions/${submission.id}/download`}
                     label={locale === "ar" ? "تنزيل التسليم" : "Download"}

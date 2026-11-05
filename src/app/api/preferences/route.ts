@@ -16,6 +16,75 @@ function setPreferenceCookie(response: NextResponse, name: string, value: string
   }
 }
 
+function getRequestOrigin(request: NextRequest): string {
+  const fwdHost = request.headers.get("x-forwarded-host")?.split(",")[0]?.trim();
+  const host = fwdHost || request.headers.get("host") || request.nextUrl.host;
+  const fwdProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim();
+  const proto = fwdProto || request.nextUrl.protocol.replace(":", "") || "https";
+  return `${proto}://${host}`;
+}
+
+function resolveSafeReturnUrl(request: NextRequest, rawReturnTo: string | null): URL {
+  const origin = getRequestOrigin(request);
+  let candidate = (rawReturnTo ?? "").trim();
+
+  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//")) {
+    const referer = request.headers.get("referer");
+    if (referer) {
+      try {
+        const refUrl = new URL(referer);
+        const expectedHost = new URL(origin).host;
+        if (refUrl.host === expectedHost || refUrl.host === request.nextUrl.host) {
+          candidate = `${refUrl.pathname}${refUrl.search}`;
+        }
+      } catch {
+        // ignore invalid referer
+      }
+    }
+  }
+
+  if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//")) {
+    candidate = "/";
+  }
+  return new URL(candidate, origin);
+}
+
+/**
+ * Progressive-enhancement GET endpoint so language & theme toggles work
+ * immediately on every mobile/desktop browser even before JS hydrates or when JS is blocked.
+ */
+export async function GET(request: NextRequest) {
+  const sp = request.nextUrl.searchParams;
+  const locale = sp.get("locale");
+  const theme = sp.get("theme");
+  const targetUrl = resolveSafeReturnUrl(request, sp.get("returnTo"));
+
+  if (locale === "en" || locale === "ar") {
+    targetUrl.searchParams.set("lang", locale);
+  }
+  if (theme === "light" || theme === "dark") {
+    targetUrl.searchParams.set("theme", theme);
+  }
+
+  const isAuthRoute =
+    targetUrl.pathname === "/login" ||
+    targetUrl.pathname.startsWith("/login/") ||
+    targetUrl.pathname === "/register";
+  if (isAuthRoute) {
+    targetUrl.searchParams.delete("session");
+    targetUrl.searchParams.delete("token");
+  }
+
+  const response = NextResponse.redirect(targetUrl, 303);
+  if (locale === "en" || locale === "ar") {
+    setPreferenceCookie(response, LOCALE_COOKIE, locale);
+  }
+  if (theme === "light" || theme === "dark") {
+    setPreferenceCookie(response, THEME_COOKIE, theme);
+  }
+  return response;
+}
+
 export async function POST(request: NextRequest) {
   let input: unknown;
   try {

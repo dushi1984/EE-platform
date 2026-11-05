@@ -18,12 +18,12 @@ export async function TopBar({ title, extra }: { title: string; extra?: ReactNod
   const accountStatus = user?.role === "student" ? normalizeAccountStatus(user.accountStatus) : "approved";
 
   return (
-    <header className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-2xl bg-navy-500 px-3 py-2.5 text-white shadow-lg shadow-navy-900/20 sm:px-4 md:grid-cols-[1fr_auto_1fr]">
+    <header className="relative z-30 grid grid-cols-[1fr_auto] items-center gap-x-2 gap-y-2 rounded-2xl bg-navy-500 px-3 py-2.5 text-white shadow-lg shadow-navy-900/20 sm:gap-3 sm:px-4 md:grid-cols-[1fr_auto_1fr]">
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <MobileMenuButton label={t("nav.menu")} />
         {user ? (
-          <Link href="/profile" className="flex min-w-0 items-center gap-3">
-            <Avatar name={user.fullName} src={user.avatarUrl} size={44} className="ring-2 ring-white/80" />
+          <Link href="/profile" className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <Avatar name={user.fullName} src={user.avatarUrl} size={40} className="shrink-0 ring-2 ring-white/80" />
             <div className="hidden min-w-0 sm:block">
               <div className="flex items-center gap-2">
                 <p className="truncate font-bold leading-tight">{displayName(user.fullName)}</p>
@@ -66,10 +66,12 @@ export async function TopBar({ title, extra }: { title: string; extra?: ReactNod
         )}
       </div>
 
-      <h1 className="order-last col-span-2 truncate text-center text-2xl font-bold tracking-tight md:order-none md:col-span-1 md:text-3xl">{title}</h1>
+      <h1 className="order-3 col-span-2 truncate text-center text-xl font-bold tracking-tight sm:text-2xl md:order-none md:col-span-1 md:text-3xl">
+        {title}
+      </h1>
 
-      <div className="flex items-center justify-end gap-2">
-        {extra}
+      <div className="flex shrink-0 items-center justify-end gap-1.5 sm:gap-2">
+        {extra && <div className="hidden md:flex md:items-center">{extra}</div>}
         {user ? (
           <NotificationBell
             locale={locale}
@@ -97,6 +99,12 @@ export async function TopBar({ title, extra }: { title: string; extra?: ReactNod
         <ThemeToggle theme={theme} label={t("common.darkMode")} />
         <LocaleToggle locale={locale} />
       </div>
+
+      {extra && (
+        <div className="order-4 col-span-2 flex flex-wrap items-center justify-center pt-0.5 md:hidden">
+          {extra}
+        </div>
+      )}
     </header>
   );
 }

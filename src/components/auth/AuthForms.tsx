@@ -6,13 +6,22 @@ import { useI18n } from "@/lib/i18n-client";
 import type { TKey } from "@/lib/i18n";
 import { gradeLabel } from "@/lib/i18n-teacher";
 import { Icon } from "@/components/ui";
+import {
+  areCookiesWorking,
+  safeGetLocal,
+  safeSetCookie,
+  safeSetLocal,
+  safeSetSession,
+} from "@/lib/browser-prefs";
 
 const groupCls =
   "overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-sm dark:border-slate-700 dark:bg-slate-950";
 const fieldCls =
-  "block w-full border-t border-slate-300 bg-transparent px-5 py-4 text-base font-semibold text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-400 first:border-t-0 focus:bg-slate-50 focus:placeholder:text-slate-500 dark:border-slate-700 dark:text-white dark:placeholder:text-slate-500 dark:focus:bg-slate-900";
+  "block w-full border-t border-slate-300 bg-transparent px-4 py-3.5 text-base font-semibold text-slate-900 outline-none placeholder:font-normal placeholder:text-slate-400 first:border-t-0 focus:bg-slate-50 focus:placeholder:text-slate-500 sm:px-5 sm:py-4 dark:border-slate-700 dark:text-white dark:placeholder:text-slate-500 dark:focus:bg-slate-900";
 const primaryBtn =
-  "mt-5 block w-full rounded-2xl bg-blue-600 py-3.5 text-center text-lg font-bold text-white shadow-lg shadow-blue-500/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-60";
+  "mt-5 block w-full cursor-pointer rounded-2xl bg-blue-600 py-3.5 text-center text-lg font-bold text-white shadow-lg shadow-blue-500/25 transition hover:bg-blue-700 active:scale-[0.99] disabled:opacity-60";
+
+const THIRTY_DAYS = 60 * 60 * 24 * 30;
 
 export type GradeOption = {
   name: string;
@@ -24,6 +33,25 @@ const FALLBACK_GRADES: GradeOption[] = [
   { name: "Grade 11", nameAr: "الصف الثاني الثانوي" },
   { name: "Grade 12", nameAr: "الصف الثالث الثانوي" },
 ];
+
+function buildPostAuthRedirect(rawDest: string, token?: string) {
+  if (typeof window === "undefined") return rawDest;
+  try {
+    const url = new URL(rawDest, window.location.origin);
+    if (areCookiesWorking() && url.searchParams.has("session")) {
+      url.searchParams.delete("session");
+    } else if (!areCookiesWorking() && token) {
+      url.searchParams.set("session", token);
+    }
+    const savedLocale = safeGetLocal("locale");
+    if (!areCookiesWorking() && (savedLocale === "ar" || savedLocale === "en")) {
+      url.searchParams.set("lang", savedLocale);
+    }
+    return url.toString();
+  } catch {
+    return rawDest;
+  }
+}
 
 export function RegisterForm({
   error,
@@ -48,6 +76,7 @@ export function RegisterForm({
       const res = await fetch("/api/auth/register", {
         method: "POST",
         body: formData,
+        credentials: "same-origin",
         headers: { Accept: "application/json" },
       });
 
@@ -55,15 +84,11 @@ export function RegisterForm({
 
       if (res.ok && data?.ok) {
         if (data.token) {
-          try {
-            localStorage.setItem("insci_session", data.token);
-            sessionStorage.setItem("insci_session", data.token);
-            document.cookie = `insci_session=${encodeURIComponent(data.token)}; path=/; max-age=2592000; SameSite=Lax`;
-          } catch {
-            // ignore
-          }
+          safeSetLocal("insci_session", data.token);
+          safeSetSession("insci_session", data.token);
+          safeSetCookie("insci_session", data.token, THIRTY_DAYS);
         }
-        window.location.href = data.next || "/dashboard";
+        window.location.assign(buildPostAuthRedirect(data.next || "/dashboard", data.token));
         return;
       }
 
@@ -113,7 +138,7 @@ export function RegisterForm({
             required
             defaultValue={gradeOptions[0]?.name ?? "Grade 10"}
             aria-label={t("auth.selectGrade")}
-            className="block w-full appearance-none bg-transparent px-5 py-4 pe-11 text-base font-semibold text-slate-900 outline-none focus:bg-slate-50 dark:bg-slate-950 dark:text-white dark:focus:bg-slate-900"
+            className="block w-full cursor-pointer appearance-none bg-transparent px-4 py-3.5 pe-11 text-base font-semibold text-slate-900 outline-none focus:bg-slate-50 sm:px-5 sm:py-4 dark:bg-slate-950 dark:text-white dark:focus:bg-slate-900"
           >
             <option value="" disabled>
               {t("auth.selectGrade")}
@@ -202,6 +227,7 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
     try {
       const res = await fetch("/api/auth/login", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ identifier: idVal, password: passVal, next, remember }),
       });
@@ -210,19 +236,15 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
 
       if (res.ok && data?.ok) {
         if (data.token) {
-          try {
-            if (remember) {
-              localStorage.setItem("insci_session", data.token);
-              document.cookie = `insci_session=${encodeURIComponent(data.token)}; path=/; max-age=2592000; SameSite=Lax`;
-            } else {
-              sessionStorage.setItem("insci_session", data.token);
-              document.cookie = `insci_session=${encodeURIComponent(data.token)}; path=/; SameSite=Lax`;
-            }
-          } catch {
-            // ignore storage quota
+          if (remember) {
+            safeSetLocal("insci_session", data.token);
+            safeSetCookie("insci_session", data.token, THIRTY_DAYS);
+          } else {
+            safeSetSession("insci_session", data.token);
+            safeSetCookie("insci_session", data.token);
           }
         }
-        window.location.href = data.next || next || "/dashboard";
+        window.location.assign(buildPostAuthRedirect(data.next || next || "/dashboard", data.token));
         return;
       }
 
@@ -263,17 +285,17 @@ export function LoginForm({ next, error, identifier }: { next: string; error?: s
           dir="auto"
         />
       </div>
-      <div className="mt-3 flex items-center justify-between">
-        <label className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-slate-800 dark:text-slate-200">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        <label className="flex cursor-pointer select-none items-center gap-2 py-1 text-sm font-semibold text-slate-800 dark:text-slate-200">
           <input
             type="checkbox"
             checked={remember}
             onChange={(e) => setRemember(e.target.checked)}
-            className="h-4 w-4 rounded border-slate-300 accent-navy-500"
+            className="h-4.5 w-4.5 rounded border-slate-300 accent-navy-500"
           />
           {t("auth.rememberMe")}
         </label>
-        <Link href="/login/qr" className="text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
+        <Link href="/login/qr" className="py-1 text-sm font-medium text-blue-600 hover:underline dark:text-blue-400">
           {t("auth.loginWithQr")}
         </Link>
       </div>

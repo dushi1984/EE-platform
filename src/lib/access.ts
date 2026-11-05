@@ -66,8 +66,8 @@ function sanitizeVisitorPages(raw: unknown): VisitorPageKey[] {
 }
 
 export const getAccessPolicy = cache(async (): Promise<AccessPolicy> => {
-  await ensureSeeded();
   try {
+    await ensureSeeded();
     const row = await db.query.accessSettings.findFirst({ where: eq(accessSettings.id, 1) });
     if (!row) {
       await db

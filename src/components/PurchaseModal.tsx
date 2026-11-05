@@ -77,7 +77,7 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
     <div
       className="fixed inset-0 flex items-start justify-center overflow-y-auto bg-slate-900/65 p-4 backdrop-blur-sm sm:items-center"
       style={{ zIndex: 200 }}
-      onMouseDown={(e) => {
+      onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >

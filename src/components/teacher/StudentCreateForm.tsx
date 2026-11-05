@@ -6,6 +6,7 @@ import { useI18n } from "@/lib/i18n-client";
 import { tt } from "@/lib/i18n-teacher";
 import { createStudentAction, type TeacherActionState } from "@/lib/teacher-actions";
 import { BackArrow, Icon } from "@/components/ui";
+import { safeCopyText } from "@/lib/browser-prefs";
 
 const input =
   "w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-base text-slate-900 outline-none placeholder:text-slate-400 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-600 dark:bg-slate-950 dark:text-white";
@@ -22,7 +23,7 @@ export function StudentCreateForm({ levels, classes }: { levels: LevelOpt[]; cla
 
   const copy = async () => {
     if (!state?.studentCode || !state.temporaryPassword) return;
-    await navigator.clipboard.writeText(`Student ID: ${state.studentCode}\nPassword: ${state.temporaryPassword}`);
+    await safeCopyText(`Student ID: ${state.studentCode}\nPassword: ${state.temporaryPassword}`);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };

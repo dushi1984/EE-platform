@@ -89,6 +89,7 @@ export function VideoPlayer({
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [progress, setProgress] = useState(18);
+  const [cssFullscreen, setCssFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const totalSeconds = Math.max(60, durationMinutes * 60);
@@ -108,6 +109,15 @@ export function VideoPlayer({
     return () => clearInterval(id);
   }, [playing]);
 
+  useEffect(() => {
+    if (!cssFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCssFullscreen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [cssFullscreen]);
+
   const fmtTime = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -115,12 +125,32 @@ export function VideoPlayer({
   };
 
   const toggleFullscreen = () => {
-    const el = containerRef.current;
+    const el = containerRef.current as (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> }) | null;
     if (!el) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
+    const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => Promise<void> };
+    if (document.fullscreenElement || doc.webkitFullscreenElement) {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        doc.webkitExitFullscreen?.();
+      }
+      setCssFullscreen(false);
+      return;
+    }
+    if (cssFullscreen) {
+      setCssFullscreen(false);
+      return;
+    }
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => setCssFullscreen((v) => !v));
+    } else if (el.webkitRequestFullscreen) {
+      try {
+        el.webkitRequestFullscreen();
+      } catch {
+        setCssFullscreen((v) => !v);
+      }
     } else {
-      el.requestFullscreen?.().catch(() => {});
+      setCssFullscreen((v) => !v);
     }
   };
 
@@ -164,7 +194,9 @@ export function VideoPlayer({
       ) : (
         <div
           ref={containerRef}
-          className="relative aspect-video select-none overflow-hidden rounded-2xl bg-gradient-to-br from-[#19214a] via-[#2a3c82] to-[#4c5fb8] shadow-xl"
+          className={` select-none overflow-hidden bg-gradient-to-br from-[#19214a] via-[#2a3c82] to-[#4c5fb8] shadow-xl ${
+            cssFullscreen ? "fixed inset-0 z-[200]" : "relative aspect-video rounded-2xl"
+          }`}
         >
           {thumbnailUrl && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -200,7 +232,14 @@ export function VideoPlayer({
                   const pct = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
                   setProgress(Math.round(pct));
                 }}
-                className="relative h-1.5 w-full cursor-pointer rounded-full bg-white/80"
+                onTouchMove={(e) => {
+                  const touch = e.touches[0];
+                  if (!touch) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pct = Math.min(100, Math.max(0, ((touch.clientX - rect.left) / rect.width) * 100));
+                  setProgress(Math.round(pct));
+                }}
+                className="relative h-2.5 w-full cursor-pointer rounded-full bg-white/80"
                 dir="ltr"
               >
                 <div className="h-full rounded-full bg-red-600" style={{ width: `${progress}%` }} />

@@ -126,10 +126,11 @@ export function SubmissionForm({ taskId }: { taskId: number }) {
           className="flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-slate-300 bg-slate-50/70 px-6 py-8 text-center transition hover:border-navy-400 dark:border-slate-700 dark:bg-slate-800/40"
         >
           <input
+            id={`task-file-${taskId}`}
             ref={inputRef}
             type="file"
             accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md,image/*"
-            className="hidden"
+            className="sr-only"
             onChange={(e) => pickFile(e.target.files?.[0])}
           />
           {file ? (
@@ -139,13 +140,12 @@ export function SubmissionForm({ taskId }: { taskId: number }) {
               </div>
               <p className="font-bold text-slate-900 dark:text-white">{file.name}</p>
               <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
-              <button
-                type="button"
-                onClick={() => inputRef.current?.click()}
-                className="text-xs font-semibold text-navy-500 hover:underline dark:text-sky-400"
+              <label
+                htmlFor={`task-file-${taskId}`}
+                className="inline-block cursor-pointer text-xs font-semibold text-navy-500 hover:underline dark:text-sky-400"
               >
                 {t("common.change")}
-              </button>
+              </label>
             </div>
           ) : (
             <>
@@ -157,13 +157,12 @@ export function SubmissionForm({ taskId }: { taskId: number }) {
                 {locale === "ar" ? "PDF أو DOC أو صورة حتى 25 ميجابايت" : "PDF, DOC, DOCX, or image up to 25 MB"}
               </p>
               <div className="mt-4">
-                <button
-                  type="button"
-                  onClick={() => inputRef.current?.click()}
-                  className="rounded-xl bg-navy-500 px-5 py-2.5 text-sm font-bold text-white shadow hover:bg-navy-600"
+                <label
+                  htmlFor={`task-file-${taskId}`}
+                  className="inline-block cursor-pointer rounded-xl bg-navy-500 px-5 py-2.5 text-sm font-bold text-white shadow hover:bg-navy-600 active:scale-95"
                 >
                   {t("tasks.uploadFile")}
-                </button>
+                </label>
               </div>
             </>
           )}
@@ -277,57 +276,45 @@ export function DownloadButton({
   label: string;
   compact?: boolean;
 }) {
-  const [pending, setPending] = useState(false);
-
-  const download = async () => {
-    if (pending) return;
-    setPending(true);
-    try {
-      const token = getClientSessionToken();
-      const res = await fetch(url, {
-        headers: token ? { "x-session-token": token } : undefined,
-      });
-      if (!res.ok) throw new Error("download failed");
-      const blob = await res.blob();
-      const disp = res.headers.get("content-disposition") ?? "";
-      const match = disp.match(/filename="?([^";]+)"?/i);
-      const filename = match?.[1] || "download";
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = objectUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    } finally {
-      setPending(false);
-    }
+  const resolveHref = () => {
+    const token = getClientSessionToken();
+    if (!token || url.includes("session=")) return url;
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}session=${encodeURIComponent(token)}`;
   };
 
   if (compact) {
     return (
-      <button
-        type="button"
-        onClick={download}
-        disabled={pending}
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        data-no-bridge="1"
+        onClick={(e) => {
+          e.currentTarget.href = resolveHref();
+        }}
         aria-label={label || "Download"}
-        className="grid h-8 w-8 place-items-center rounded-lg text-blue-600 hover:bg-blue-50 disabled:opacity-50 dark:hover:bg-slate-800"
+        title={label || "Download"}
+        className="grid h-8 w-8 cursor-pointer place-items-center rounded-lg text-blue-600 hover:bg-blue-50 active:scale-95 dark:hover:bg-slate-800"
       >
         <Icon name="download" className="h-4 w-4" />
-      </button>
+      </a>
     );
   }
 
   return (
-    <button
-      type="button"
-      onClick={download}
-      disabled={pending}
-      className="flex shrink-0 items-center gap-1.5 rounded-lg bg-navy-500 px-3.5 py-2 text-xs font-bold text-white hover:bg-navy-600 disabled:opacity-60"
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-no-bridge="1"
+      onClick={(e) => {
+        e.currentTarget.href = resolveHref();
+      }}
+      className="inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg bg-navy-500 px-3.5 py-2 text-xs font-bold text-white hover:bg-navy-600 active:scale-95"
     >
       <Icon name="download" className="h-4 w-4" />
-      {pending ? "…" : label}
-    </button>
+      {label}
+    </a>
   );
 }

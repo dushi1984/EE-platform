@@ -1,3 +1,5 @@
+import { safeGetCookie, safeGetLocal, safeGetSession } from "./browser-prefs";
+
 export const MAX_FILE_BYTES = 25 * 1024 * 1024; // 25 MB in Supabase `files` bucket
 
 export const GOOGLE_DRIVE_FOLDER_URL =
@@ -21,11 +23,18 @@ export function formatBytes(bytes: number) {
 
 export function getClientSessionToken(): string {
   if (typeof window === "undefined") return "";
-  const params = new URLSearchParams(window.location.search);
+  let queryToken = "";
+  try {
+    const params = new URLSearchParams(window.location.search);
+    queryToken = params.get("session") || "";
+  } catch {
+    // ignore
+  }
   return (
-    params.get("session") ||
-    localStorage.getItem("insci_session") ||
-    sessionStorage.getItem("insci_session") ||
+    queryToken ||
+    safeGetLocal("insci_session") ||
+    safeGetSession("insci_session") ||
+    safeGetCookie("insci_session") ||
     ""
   );
 }

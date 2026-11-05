@@ -145,21 +145,21 @@ export default async function HomePage() {
 
   return (
     <div className="overflow-hidden bg-[#f5f8fa] dark:bg-slate-950">
-      <header className="relative z-20 border-b border-navy-500/10 bg-white/85 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/85">
-        <div className="mx-auto flex h-[76px] max-w-7xl items-center justify-between gap-3 px-5 sm:px-8">
-          <Link href="/" className="flex shrink-0 items-center gap-2.5 text-navy-500 dark:text-white" dir="ltr">
-            <Logo className="h-9 w-9" />
-            <span className="text-xl font-extrabold tracking-tight sm:text-2xl">in science</span>
+      <header className="relative z-20 border-b border-navy-500/10 bg-white/90 backdrop-blur-xl dark:border-white/10 dark:bg-slate-950/90">
+        <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between gap-2 px-3.5 sm:h-[76px] sm:gap-3 sm:px-8">
+          <Link href="/" className="flex min-w-0 shrink-0 items-center gap-2 text-navy-500 sm:gap-2.5 dark:text-white" dir="ltr">
+            <Logo className="h-8 w-8 shrink-0 sm:h-9 sm:w-9" />
+            <span className="truncate text-lg font-extrabold tracking-tight sm:text-2xl">in science</span>
           </Link>
           <nav className="hidden items-center gap-8 text-sm font-semibold text-slate-600 dark:text-slate-300 md:flex">
             <a href="#subjects" className="hover:text-navy-500 dark:hover:text-sun-400">{c.explore}</a>
             <a href="#how-it-works" className="hover:text-navy-500 dark:hover:text-sun-400">{c.how}</a>
           </nav>
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
             <ThemeToggle theme={theme} label={t("common.darkMode")} />
             <LocaleToggle locale={locale} />
             <Link href={user ? "/dashboard" : "/login"} className="hidden whitespace-nowrap text-sm font-bold text-navy-500 hover:underline dark:text-white sm:inline">{user ? c.dashboard : c.signIn}</Link>
-            <Link href={destination} className="whitespace-nowrap rounded-xl bg-sun-400 px-3.5 py-2.5 text-sm font-extrabold text-navy-800 transition hover:bg-sun-500 sm:px-5">{user ? c.dashboard : c.getStarted}</Link>
+            <Link href={destination} className="whitespace-nowrap rounded-xl bg-sun-400 px-3 py-2 text-xs font-extrabold text-navy-800 transition hover:bg-sun-500 sm:px-5 sm:py-2.5 sm:text-sm">{user ? c.dashboard : c.getStarted}</Link>
           </div>
         </div>
       </header>

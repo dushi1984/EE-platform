@@ -2,26 +2,24 @@
 
 import { Suspense, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import { safeDeleteCookie, safeRemoveLocal, safeRemoveSession } from "@/lib/browser-prefs";
 
 function Cleaner() {
   const params = useSearchParams();
   useEffect(() => {
     if (params.get("logged_out") !== "1" && params.get("reauth") !== "1") return;
+    safeRemoveLocal("insci_session");
+    safeRemoveSession("insci_session");
+    safeDeleteCookie("insci_session");
     try {
-      localStorage.removeItem("insci_session");
-      sessionStorage.removeItem("insci_session");
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("session") || url.searchParams.has("token")) {
+        url.searchParams.delete("session");
+        url.searchParams.delete("token");
+        window.history.replaceState(null, "", url.toString());
+      }
     } catch {
       // ignore
-    }
-    for (const n of ["insci_session", "insci_session_p"]) {
-      document.cookie = `${n}=; path=/; max-age=0; SameSite=Lax`;
-      document.cookie = `${n}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-    }
-    const url = new URL(window.location.href);
-    if (url.searchParams.has("session") || url.searchParams.has("token")) {
-      url.searchParams.delete("session");
-      url.searchParams.delete("token");
-      window.history.replaceState(null, "", url.toString());
     }
   }, [params]);
   return null;

@@ -20,11 +20,24 @@ export function TaskActions({ taskId, status, progress }: { taskId: number; stat
 
   useEffect(() => {
     if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    const onDoc = (e: Event) => {
+      if (ref.current && e.target instanceof Node && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("pointerdown", onDoc);
+    document.addEventListener("touchstart", onDoc, { passive: true });
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDoc);
+      document.removeEventListener("touchstart", onDoc);
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, [open]);
 
   const apply = (next: TaskStatus, p = value) =>

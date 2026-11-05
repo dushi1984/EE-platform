@@ -4,6 +4,18 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { Icon, Logo } from "@/components/ui";
+import {
+  areCookiesWorking,
+  closestElement,
+  safeDeleteCookie,
+  safeGetCookie,
+  safeGetLocal,
+  safeGetSession,
+  safeRemoveLocal,
+  safeRemoveSession,
+  safeSetCookie,
+  safeSetLocal,
+} from "@/lib/browser-prefs";
 
 type NavItem = {
   href: string;
@@ -14,6 +26,8 @@ type NavItem = {
 type ShellCtx = { open: boolean; setOpen: (v: boolean) => void; sessionToken: string; unreadCount: number };
 const Ctx = createContext<ShellCtx>({ open: false, setOpen: () => {}, sessionToken: "", unreadCount: 0 });
 
+const THIRTY_DAYS = 60 * 60 * 24 * 30;
+
 export function useSessionToken() {
   const { sessionToken } = useContext(Ctx);
   return sessionToken;
@@ -21,12 +35,19 @@ export function useSessionToken() {
 
 export function getActiveSessionToken(fallback = ""): string {
   if (typeof window === "undefined") return fallback;
-  const params = new URLSearchParams(window.location.search);
+  let queryToken = "";
+  try {
+    const params = new URLSearchParams(window.location.search);
+    queryToken = params.get("session") || "";
+  } catch {
+    // ignore
+  }
   return (
-    params.get("session") ||
+    queryToken ||
     fallback ||
-    localStorage.getItem("insci_session") ||
-    sessionStorage.getItem("insci_session") ||
+    safeGetLocal("insci_session") ||
+    safeGetSession("insci_session") ||
+    safeGetCookie("insci_session") ||
     ""
   );
 }
@@ -43,15 +64,23 @@ export function buildSessionUrl(raw: string, explicitToken?: string): string {
     url.pathname === "/login" ||
     url.pathname.startsWith("/login/") ||
     url.pathname === "/register";
-  if (token && !isAuthPage) url.searchParams.set("session", token);
+
+  const cookiesOk = areCookiesWorking();
+  if (token && !isAuthPage && (!cookiesOk || window.location.search.includes("session="))) {
+    url.searchParams.set("session", token);
+  }
   try {
     const currentParams = new URLSearchParams(window.location.search);
-    const locale = localStorage.getItem("locale") || currentParams.get("lang");
-    const theme = localStorage.getItem("theme") || currentParams.get("theme");
-    if (locale === "en" || locale === "ar") url.searchParams.set("lang", locale);
-    if (theme === "light" || theme === "dark") url.searchParams.set("theme", theme);
+    const locale = safeGetLocal("locale") || currentParams.get("lang");
+    const theme = safeGetLocal("theme") || currentParams.get("theme");
+    if (!cookiesOk || currentParams.has("lang")) {
+      if (locale === "en" || locale === "ar") url.searchParams.set("lang", locale);
+    }
+    if (!cookiesOk || currentParams.has("theme")) {
+      if (theme === "light" || theme === "dark") url.searchParams.set("theme", theme);
+    }
   } catch {
-    // ignore storage errors
+    // ignore
   }
   return url.toString();
 }
@@ -67,73 +96,85 @@ export function reloadWithSession(explicitToken?: string) {
 }
 
 export function MobileMenuButton({ label }: { label: string }) {
-  const { setOpen } = useContext(Ctx);
+  const { open, setOpen } = useContext(Ctx);
   return (
-    <button type="button" onClick={() => setOpen(true)} aria-label={label} className="grid h-10 w-10 place-items-center rounded-lg text-white hover:bg-white/10 lg:hidden">
+    <label
+      htmlFor="insci-mobile-drawer"
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      aria-expanded={open}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setOpen(!open);
+        }
+      }}
+      className="grid h-10 w-10 shrink-0 cursor-pointer select-none place-items-center rounded-xl bg-white/10 text-white ring-1 ring-white/15 transition hover:bg-white/20 active:scale-95 lg:hidden"
+    >
       <Icon name="menu" className="h-6 w-6" />
-    </button>
+    </label>
   );
 }
 
 function clearClientSession() {
-  try {
-    localStorage.removeItem("insci_session");
-    sessionStorage.removeItem("insci_session");
-  } catch {
-    // Storage can be unavailable in privacy-restricted frames.
-  }
-  for (const n of ["insci_session", "insci_session_p"]) {
-    document.cookie = `${n}=; path=/; max-age=0; SameSite=Lax`;
-    document.cookie = `${n}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
-    document.cookie = `${n}=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=None; Secure`;
-  }
+  safeRemoveLocal("insci_session");
+  safeRemoveSession("insci_session");
+  safeDeleteCookie("insci_session");
 }
 
 function SignOutButton({ label, collapsed }: { label: string; collapsed: boolean }) {
   const { sessionToken } = useContext(Ctx);
   const [busy, setBusy] = useState(false);
 
+  const suffix = sessionToken ? `?session=${encodeURIComponent(sessionToken)}` : "";
+  const logoutActionUrl = `/api/auth/logout${suffix}`;
+
   const doSignOut = async () => {
     if (busy) return;
     setBusy(true);
     const token = getActiveSessionToken(sessionToken);
     try {
-      const suffix = token ? `?session=${encodeURIComponent(token)}` : "";
-      await fetch(`/api/auth/logout${suffix}`, {
+      const tokSuffix = token ? `?session=${encodeURIComponent(token)}` : "";
+      await fetch(`/api/auth/logout${tokSuffix}`, {
         method: "POST",
         credentials: "same-origin",
         redirect: "manual",
         headers: token ? { "x-session-token": token } : undefined,
       });
     } catch {
-      // The local session is still cleared below if the network is interrupted.
+      // Local session is still cleared below if offline.
     }
     clearClientSession();
     let loginUrl = "/login?logged_out=1";
-    try {
-      const savedLocale = localStorage.getItem("locale");
-      if (savedLocale === "ar" || savedLocale === "en") {
-        loginUrl += `&lang=${savedLocale}`;
-      }
-    } catch {
-      // ignore
+    const savedLocale = safeGetLocal("locale");
+    if ((savedLocale === "ar" || savedLocale === "en") && !areCookiesWorking()) {
+      loginUrl += `&lang=${savedLocale}`;
     }
     window.location.replace(loginUrl);
   };
 
   return (
-    <button
-      type="button"
-      onClick={doSignOut}
-      disabled={busy}
-      title={label}
-      className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-[15px] text-white/85 transition hover:bg-white/10 hover:text-white disabled:opacity-60 ${
-        collapsed ? "lg:justify-center lg:px-0" : ""
-      }`}
+    <form
+      action={logoutActionUrl}
+      method="post"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void doSignOut();
+      }}
     >
-      <Icon name="logout" className="h-5 w-5 shrink-0" />
-      <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{busy ? "…" : label}</span>
-    </button>
+      <button
+        type="submit"
+        disabled={busy}
+        title={label}
+        className={`flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-3 text-[15px] text-white/85 transition hover:bg-white/10 hover:text-white active:bg-white/15 disabled:opacity-60 ${
+          collapsed ? "lg:justify-center lg:px-0" : ""
+        }`}
+      >
+        <Icon name="logout" className="h-5 w-5 shrink-0" />
+        <span className={`truncate ${collapsed ? "lg:sr-only" : ""}`}>{busy ? "…" : label}</span>
+      </button>
+    </form>
   );
 }
 
@@ -142,45 +183,57 @@ function SessionNavigationBridge({ token }: { token: string }) {
     const activeToken = getActiveSessionToken(token);
     if (!activeToken) return;
 
-    // Keep the current URL synced with ?session= via replaceState so native
-    // POST forms (action="") and browser reloads never lose authentication.
-    try {
-      const current = new URL(window.location.href);
-      if (current.searchParams.get("session") !== activeToken) {
-        current.searchParams.set("session", activeToken);
-        window.history.replaceState(window.history.state, "", current.toString());
+    const cookiesOk = areCookiesWorking();
+
+    // Only keep ?session= in the address bar when cookies are blocked by the browser/frame.
+    if (!cookiesOk) {
+      try {
+        const current = new URL(window.location.href);
+        if (current.searchParams.get("session") !== activeToken) {
+          current.searchParams.set("session", activeToken);
+          window.history.replaceState(window.history.state, "", current.toString());
+        }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
 
     const onClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof Element)) return;
-      const anchor = target.closest<HTMLAnchorElement>("a[href]");
-      if (!anchor || anchor.hasAttribute("download")) return;
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      const el = closestElement(event.target);
+      const anchor = el?.closest("a[href]") as HTMLAnchorElement | null;
+      if (!anchor || anchor.hasAttribute("data-no-bridge") || anchor.hasAttribute("download") || anchor.target === "_blank") {
+        return;
+      }
       const raw = anchor.getAttribute("href");
       if (!raw || raw.startsWith("#") || raw.startsWith("mailto:") || raw.startsWith("tel:")) return;
 
-      const nextHref = buildSessionUrl(anchor.href, activeToken);
-      const url = new URL(nextHref, window.location.origin);
-      if (url.origin !== window.location.origin || url.pathname.startsWith("/api/")) return;
-      anchor.href = url.toString();
+      // When first-party cookies work (standard mobile & desktop browsers), let Next.js <Link>
+      // handle fast client-side navigation directly; cookies + patched fetch carry auth.
+      if (areCookiesWorking() && !window.location.search.includes("session=")) {
+        return;
+      }
 
-      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || anchor.target === "_blank") return;
+      try {
+        const nextHref = buildSessionUrl(anchor.href, activeToken);
+        const url = new URL(nextHref, window.location.origin);
+        if (url.origin !== window.location.origin || url.pathname.startsWith("/api/")) return;
+        anchor.href = url.toString();
 
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      window.location.assign(url.toString());
+        event.preventDefault();
+        window.location.assign(url.toString());
+      } catch {
+        // ignore
+      }
     };
 
     const onSubmit = (event: SubmitEvent) => {
       const form = event.target;
       if (!(form instanceof HTMLFormElement)) return;
       const method = (form.getAttribute("method") || "get").toLowerCase();
-      // For GET search/filter forms, browsers build the query string from form inputs
-      // and strip query params from form.action. Inject hidden session/lang inputs.
-      if (method === "get") {
+      if (method === "get" && (!areCookiesWorking() || window.location.search.includes("session="))) {
         if (!form.querySelector('input[name="session"]')) {
           const input = document.createElement("input");
           input.type = "hidden";
@@ -188,24 +241,18 @@ function SessionNavigationBridge({ token }: { token: string }) {
           input.value = activeToken;
           form.appendChild(input);
         }
-        try {
-          const locale = localStorage.getItem("locale");
-          if ((locale === "en" || locale === "ar") && !form.querySelector('input[name="lang"]')) {
-            const langInput = document.createElement("input");
-            langInput.type = "hidden";
-            langInput.name = "lang";
-            langInput.value = locale;
-            form.appendChild(langInput);
-          }
-        } catch {
-          // ignore
+        const locale = safeGetLocal("locale");
+        if ((locale === "en" || locale === "ar") && !form.querySelector('input[name="lang"]')) {
+          const langInput = document.createElement("input");
+          langInput.type = "hidden";
+          langInput.name = "lang";
+          langInput.value = locale;
+          form.appendChild(langInput);
         }
       }
-      // IMPORTANT: Do NOT mutate form.action on POST forms, as that overwrites
-      // React 19's Server Action function binding on <form action={fn}>!
     };
 
-    // Add the token to all same-origin fetches, including React Server Actions and RSC requests.
+    // Attach session, locale, and theme headers to all same-origin fetches & Server Actions.
     const nativeFetch = window.fetch.bind(window);
     const sessionFetch: typeof window.fetch = (input, init = {}) => {
       try {
@@ -214,10 +261,13 @@ function SessionNavigationBridge({ token }: { token: string }) {
         if (url.origin !== window.location.origin) return nativeFetch(input, init);
 
         const headers = new Headers(input instanceof Request ? input.headers : undefined);
-        new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+        if (init.headers) {
+          new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+        }
         if (!headers.has("x-session-token")) headers.set("x-session-token", activeToken);
-        const savedLocale = localStorage.getItem("locale");
-        const savedTheme = localStorage.getItem("theme");
+
+        const savedLocale = safeGetLocal("locale") || safeGetCookie("locale");
+        const savedTheme = safeGetLocal("theme") || safeGetCookie("theme");
         if ((savedLocale === "en" || savedLocale === "ar") && !headers.has("x-locale")) {
           headers.set("x-locale", savedLocale);
         }
@@ -225,7 +275,11 @@ function SessionNavigationBridge({ token }: { token: string }) {
           headers.set("x-theme", savedTheme);
         }
 
-        if ((typeof input === "string" || input instanceof URL) && !url.pathname.startsWith("/api/auth/")) {
+        if (
+          (typeof input === "string" || input instanceof URL) &&
+          !url.pathname.startsWith("/api/auth/") &&
+          (!areCookiesWorking() || window.location.search.includes("session="))
+        ) {
           if (!url.searchParams.has("session")) url.searchParams.set("session", activeToken);
           return nativeFetch(url.toString(), { ...init, headers });
         }
@@ -237,10 +291,10 @@ function SessionNavigationBridge({ token }: { token: string }) {
     };
     window.fetch = sessionFetch;
 
-    document.addEventListener("click", onClick, true);
+    document.addEventListener("click", onClick, false);
     document.addEventListener("submit", onSubmit, true);
     return () => {
-      document.removeEventListener("click", onClick, true);
+      document.removeEventListener("click", onClick, false);
       document.removeEventListener("submit", onSubmit, true);
       if (window.fetch === sessionFetch) window.fetch = nativeFetch;
     };
@@ -290,10 +344,25 @@ export function Shell({
   }, [pathname]);
 
   useEffect(() => {
+    if (!open) return;
+    const prevOverflow = document.body.style.overflow;
+    if (typeof window !== "undefined" && !window.matchMedia("(min-width: 1024px)").matches) {
+      document.body.style.overflow = "hidden";
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  useEffect(() => {
     setUnreadNotifs(unreadNotifications);
   }, [unreadNotifications]);
 
-  // Clear the unread badge once the user opens the inbox
   useEffect(() => {
     if (pathname === "/messages" && unread > 0) {
       const timer = setTimeout(() => setUnread(0), 5000);
@@ -305,21 +374,15 @@ export function Shell({
     const token = getActiveSessionToken(initialSessionToken);
     if (!token) return;
     setSessionToken(token);
-    try {
-      localStorage.setItem("insci_session", token);
-      document.cookie = `insci_session=${encodeURIComponent(token)}; path=/; max-age=2592000; SameSite=Lax`;
-    } catch {
-      // Query-string navigation remains available if storage/cookies are blocked.
-    }
+    safeSetLocal("insci_session", token);
+    safeSetCookie("insci_session", token, THIRTY_DAYS);
   }, [initialSessionToken]);
-
-  const handleHamburger = () => {
-    if (window.matchMedia("(min-width: 1024px)").matches) setCollapsed((c) => !c);
-    else setOpen(false);
-  };
 
   const buildHref = (path: string) => {
     if (!sessionToken || path.includes("session=")) return path;
+    if (typeof document !== "undefined" && areCookiesWorking() && !window.location.search.includes("session=")) {
+      return path;
+    }
     const [base, hash] = path.split("#");
     const joiner = base.includes("?") ? "&" : "?";
     return `${base}${joiner}session=${encodeURIComponent(sessionToken)}${hash ? `#${hash}` : ""}`;
@@ -329,27 +392,72 @@ export function Shell({
     <Ctx.Provider value={{ open, setOpen, sessionToken, unreadCount: unread }}>
       <SessionNavigationBridge token={sessionToken} />
       <div className="mx-auto max-w-[1440px] p-3 sm:p-5">
-        <div className="flex items-start gap-5">
-          {open && <button aria-label="Close menu" onClick={() => setOpen(false)} className="fixed inset-0 z-40 bg-slate-900/50 backdrop-blur-sm lg:hidden" />}
+        {/* Progressive HTML checkbox keeps mobile drawer functional even before JS hydration */}
+        <input
+          id="insci-mobile-drawer"
+          type="checkbox"
+          checked={open}
+          onChange={(e) => setOpen(e.target.checked)}
+          className="sr-only"
+          aria-hidden="true"
+        />
 
+        <label
+          htmlFor="insci-mobile-drawer"
+          data-open={open ? "true" : "false"}
+          aria-label="Close menu"
+          className="app-sidebar-backdrop lg:hidden"
+        />
+
+        <div className="flex items-start gap-5">
           <aside
-            className={`z-50 flex shrink-0 flex-col bg-navy-500 text-white shadow-2xl transition-[transform,width] duration-300 max-lg:fixed max-lg:inset-y-0 max-lg:start-0 max-lg:h-full max-lg:w-64 ${
-              open ? "max-lg:translate-x-0" : "max-lg:-translate-x-full max-lg:rtl:translate-x-full"
-            } lg:sticky lg:top-5 lg:h-[calc(100vh-2.5rem)] lg:translate-x-0 lg:rounded-2xl ${
+            data-open={open ? "true" : "false"}
+            className={`app-sidebar flex shrink-0 flex-col bg-navy-500 text-white shadow-2xl lg:sticky lg:top-5 lg:z-30 lg:h-[calc(100vh-2.5rem)] lg:rounded-2xl lg:transition-[width] lg:duration-300 ${
               collapsed ? "lg:w-[4.75rem]" : "lg:w-56"
             }`}
           >
             <div className={`flex items-center px-3 py-4 ${collapsed ? "lg:justify-center" : "justify-between"}`}>
-              <Link href={buildHref(homeHref)} prefetch={false} className={`flex items-center gap-2 overflow-hidden ${collapsed ? "lg:hidden" : ""}`}>
+              <Link
+                href={buildHref(homeHref)}
+                prefetch={false}
+                onClick={() => setOpen(false)}
+                className={`flex items-center gap-2 overflow-hidden ${collapsed ? "lg:hidden" : ""}`}
+              >
                 <Logo className="h-8 w-8 shrink-0 text-white" />
-                <span className="truncate text-xl font-bold tracking-tight" dir="ltr">{brand}</span>
+                <span className="truncate text-xl font-bold tracking-tight" dir="ltr">
+                  {brand}
+                </span>
               </Link>
-              <button type="button" onClick={handleHamburger} aria-label={menuLabel} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg hover:bg-white/10">
+
+              {/* Mobile drawer close control (works with or without JS via #insci-mobile-drawer) */}
+              <label
+                htmlFor="insci-mobile-drawer"
+                role="button"
+                tabIndex={0}
+                aria-label="Close menu"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setOpen(false);
+                  }
+                }}
+                className="grid h-9 w-9 shrink-0 cursor-pointer place-items-center rounded-lg text-white hover:bg-white/10 active:bg-white/20 lg:hidden"
+              >
+                <Icon name="x" className="h-6 w-6" />
+              </label>
+
+              {/* Desktop collapse button */}
+              <button
+                type="button"
+                onClick={() => setCollapsed((c) => !c)}
+                aria-label={menuLabel}
+                className="hidden h-9 w-9 shrink-0 cursor-pointer place-items-center rounded-lg hover:bg-white/10 lg:grid"
+              >
                 <Icon name="menu" className="h-7 w-7" />
               </button>
             </div>
 
-            <nav className="thin-scroll mt-2 flex flex-1 flex-col gap-3 overflow-y-auto px-2.5">
+            <nav className="thin-scroll mt-2 flex flex-1 flex-col gap-2.5 overflow-y-auto px-2.5">
               {items.map((item) => {
                 const active = pathname === item.href || pathname.startsWith(item.href + "/");
                 return (
@@ -357,9 +465,12 @@ export function Shell({
                     key={item.href}
                     href={buildHref(item.href)}
                     prefetch={false}
+                    onClick={() => setOpen(false)}
                     title={item.label}
                     className={`relative flex items-center gap-3 rounded-lg px-3 py-3 text-[15px] transition ${
-                      active ? "bg-sun-400 font-semibold text-navy-800 shadow-md shadow-black/10" : "text-white hover:bg-white/10"
+                      active
+                        ? "bg-sun-400 font-semibold text-navy-800 shadow-md shadow-black/10"
+                        : "text-white hover:bg-white/10 active:bg-white/15"
                     } ${collapsed ? "lg:justify-center lg:px-0" : ""}`}
                   >
                     <Icon name={item.icon} className="h-5 w-5 shrink-0" />
@@ -404,6 +515,7 @@ export function Shell({
                 <>
                   <Link
                     href="/register"
+                    onClick={() => setOpen(false)}
                     title={registerLabel || "Create account"}
                     className={`flex w-full items-center gap-3 rounded-lg bg-sun-400 px-3 py-2.5 text-sm font-extrabold text-navy-900 shadow-sm transition hover:bg-sun-500 ${
                       collapsed ? "lg:justify-center lg:px-0" : ""
@@ -414,6 +526,7 @@ export function Shell({
                   </Link>
                   <Link
                     href="/login"
+                    onClick={() => setOpen(false)}
                     title={signInLabel || "Sign in"}
                     className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold text-white/90 transition hover:bg-white/10 hover:text-white ${
                       collapsed ? "lg:justify-center lg:px-0" : ""
