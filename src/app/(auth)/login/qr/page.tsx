@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { getI18n } from "@/lib/i18n-server";
-import { Logo } from "@/components/ui";
+import { BackArrow, Logo } from "@/components/ui";
 import { QrScanner } from "@/components/auth/QrScanner";
 
 export const metadata: Metadata = { title: "QR sign in" };
@@ -44,7 +44,7 @@ export default async function QrLoginPage({ searchParams }: { searchParams: Prom
 
       <p className="mt-6 text-center text-sm">
         <Link href="/login" className="font-semibold text-blue-600 hover:underline">
-          ← {t("auth.backToLogin")}
+          <BackArrow /> {t("auth.backToLogin")}
         </Link>
       </p>
     </div>

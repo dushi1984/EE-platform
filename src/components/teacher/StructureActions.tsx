@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   deleteClassAction,
@@ -11,20 +11,45 @@ import {
 } from "@/lib/teacher-actions";
 
 export function DeleteLevelBtn({ id, label }: { id: number; label: string }) {
+  const [confirming, setConfirming] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
+
+  if (confirming) {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() =>
+            start(async () => {
+              await deleteLevelAction(id);
+              setConfirming(false);
+              router.refresh();
+            })
+          }
+          className="cursor-pointer rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50"
+        >
+          {pending ? "…" : label}
+        </button>
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => setConfirming(false)}
+          className="cursor-pointer rounded bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200"
+        >
+          ×
+        </button>
+      </span>
+    );
+  }
+
   return (
     <button
       type="button"
       disabled={pending}
-      onClick={() => {
-        if (!window.confirm("Delete this grade level and its classes?")) return;
-        start(async () => {
-          await deleteLevelAction(id);
-          router.refresh();
-        });
-      }}
-      className="text-xs font-bold text-red-500 hover:text-red-700 disabled:opacity-50"
+      onClick={() => setConfirming(true)}
+      className="cursor-pointer text-xs font-bold text-red-500 hover:text-red-700 disabled:opacity-50"
     >
       {label}
     </button>
@@ -44,7 +69,7 @@ export function DeleteClassBtn({ id, label }: { id: number; label: string }) {
           router.refresh();
         })
       }
-      className="text-xs font-bold text-red-500 hover:text-red-700 disabled:opacity-50"
+      className="cursor-pointer text-xs font-bold text-red-500 hover:text-red-700 disabled:opacity-50"
     >
       {label}
     </button>
@@ -62,10 +87,11 @@ export function TermButtons({
   setActiveLabel: string;
   deleteLabelText: string;
 }) {
+  const [confirming, setConfirming] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
   return (
-    <span className="flex items-center gap-2">
+    <span className="flex flex-wrap items-center gap-2">
       {!isActive && (
         <button
           type="button"
@@ -76,25 +102,46 @@ export function TermButtons({
               router.refresh();
             })
           }
-          className="rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-100 disabled:opacity-50 dark:bg-blue-500/10 dark:text-blue-300"
+          className="cursor-pointer rounded-lg bg-blue-50 px-2.5 py-1 text-xs font-bold text-blue-600 hover:bg-blue-100 disabled:opacity-50 dark:bg-blue-500/10 dark:text-blue-300"
         >
           {setActiveLabel}
         </button>
       )}
-      <button
-        type="button"
-        disabled={pending}
-        onClick={() => {
-          if (!window.confirm("Delete this term?")) return;
-          start(async () => {
-            await deleteTermAction(id);
-            router.refresh();
-          });
-        }}
-        className="text-xs font-bold text-red-500 hover:text-red-700 disabled:opacity-50"
-      >
-        {deleteLabelText}
-      </button>
+      {confirming ? (
+        <span className="inline-flex items-center gap-1.5">
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                await deleteTermAction(id);
+                setConfirming(false);
+                router.refresh();
+              })
+            }
+            className="cursor-pointer rounded bg-red-600 px-2 py-0.5 text-xs font-bold text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {pending ? "…" : deleteLabelText}
+          </button>
+          <button
+            type="button"
+            disabled={pending}
+            onClick={() => setConfirming(false)}
+            className="cursor-pointer rounded bg-slate-200 px-2 py-0.5 text-xs font-semibold text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200"
+          >
+            ×
+          </button>
+        </span>
+      ) : (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => setConfirming(true)}
+          className="cursor-pointer text-xs font-bold text-red-500 hover:text-red-700 disabled:opacity-50"
+        >
+          {deleteLabelText}
+        </button>
+      )}
     </span>
   );
 }
@@ -113,7 +160,7 @@ export function DeleteSubjectBtn({ id, label, inUse, inUseMsg }: { id: number; l
           router.refresh();
         })
       }
-      className="text-xs font-bold text-red-500 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
+      className="cursor-pointer text-xs font-bold text-red-500 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-40"
     >
       {label}
     </button>

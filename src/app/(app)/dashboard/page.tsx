@@ -4,89 +4,320 @@ import type { Metadata } from "next";
 import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate, tr } from "@/lib/i18n";
-import { getDashboardData, getRecentTaskGrades } from "@/lib/queries";
+import {
+  canAccessMaterialContent,
+  canAccessStudentPage,
+  canAccessTaskContent,
+  firstAllowedPath,
+  getAccessPolicy,
+  normalizeAccountStatus,
+} from "@/lib/access";
+import { getDashboardData, getMaterialsForUser, getVisitorTasks } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Badge, Card, EmptyState, ProgressBar, SectionTitle, SubHeading } from "@/components/ui";
+import {
+  Badge,
+  Card,
+  EmptyState,
+  ForwardArrow,
+  Icon,
+  ProgressBar,
+  SectionTitle,
+  SubHeading,
+  SubjectBadge,
+  type IconName,
+} from "@/components/ui";
 import { MaterialThumb } from "@/components/MaterialCard";
 import { TeacherDashboard } from "@/components/teacher/TeacherDashboard";
 
 export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  if (user.role === "teacher") return <TeacherDashboard />;
-  const { t, locale } = await getI18n();
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
+
+  if (user?.role === "teacher") return <TeacherDashboard />;
+
+  if (!user) {
+    if (!canAccessStudentPage(null, "dashboard", policy)) {
+      const fallback = firstAllowedPath(null, policy);
+      redirect(fallback === "/dashboard" ? "/login" : fallback);
+    }
+    const [visitorMaterials, visitorTasks] = await Promise.all([
+      canAccessStudentPage(null, "materials", policy) ? getMaterialsForUser(-1) : Promise.resolve([]),
+      canAccessStudentPage(null, "tasks", policy) ? getVisitorTasks() : Promise.resolve([]),
+    ]);
+    const openMaterials = visitorMaterials.filter((m) => canAccessMaterialContent(null, m, policy));
+
+    return (
+      <>
+        <TopBar title={t("dashboard.title")} />
+
+        <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-navy-600 via-blue-600 to-sky-500 p-6 text-white shadow-xl shadow-navy-900/15 sm:p-7">
+          <div aria-hidden className="pointer-events-none absolute -end-8 -top-10 h-44 w-44 rounded-full bg-sun-400/20 blur-2xl" />
+          <div aria-hidden className="pointer-events-none absolute end-8 top-6 hidden text-white/15 md:block">
+            <Icon name="atom" className="h-24 w-24" />
+          </div>
+          <div className="relative z-10 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
+            <div>
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-50 ring-1 ring-white/20 backdrop-blur-sm">
+                <Icon name="sparkles" className="h-3.5 w-3.5 text-sun-400" />
+                {locale === "ar" ? "جولة الزوار" : "Visitor Preview"}
+              </span>
+              <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight sm:text-3xl">
+                {locale === "ar" ? "مرحباً بك في منصة العلوم!" : "Welcome to in science!"}
+              </h2>
+              <p className="mt-1 max-w-xl text-sm text-blue-50/95">
+                {locale === "ar"
+                  ? "تصفح الدروس المجانية والمهام التجريبية أدناه، أو أنشئ حسابك الدراسي للالتحاق بصفك."
+                  : "Explore free preview lessons and sample tasks below, or sign up with your grade to join your class."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2.5">
+              <Link
+                href="/register"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-sun-400 px-4 py-2.5 text-sm font-extrabold text-navy-900 shadow-md transition hover:bg-sun-500"
+              >
+                <Icon name="sparkles" className="h-4 w-4" />
+                {t("auth.register")}
+              </Link>
+              {canAccessStudentPage(null, "materials", policy) && (
+                <Link
+                  href="/materials"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-4 py-2.5 text-sm font-bold text-white ring-1 ring-white/25 backdrop-blur-sm transition hover:bg-white/25"
+                >
+                  <Icon name="flask" className="h-4 w-4" />
+                  {locale === "ar" ? "تصفح المواد" : "Browse Materials"}
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3">
+          <Stat
+            label={locale === "ar" ? "دروس مجانية للزوار" : "Open Free Materials"}
+            value={String(openMaterials.length)}
+            icon="book"
+            tone="bg-gradient-to-br from-violet-100 to-purple-100 text-violet-700 ring-1 ring-violet-200/80 dark:from-violet-500/20 dark:to-purple-500/15 dark:text-violet-300 dark:ring-violet-400/25"
+          />
+          <Stat
+            label={locale === "ar" ? "مهام متاحة للمعاينة" : "Sample Tasks"}
+            value={String(visitorTasks.length)}
+            icon="clipboard"
+            tone="bg-gradient-to-br from-sky-100 to-blue-100 text-sky-700 ring-1 ring-sky-200/80 dark:from-sky-500/20 dark:to-blue-500/15 dark:text-sky-300 dark:ring-sky-400/25"
+          />
+          <Stat
+            label={locale === "ar" ? "حالة الحساب" : "Account Mode"}
+            value={locale === "ar" ? "زائر" : "Visitor"}
+            icon="sparkles"
+            tone="bg-gradient-to-br from-amber-100 to-orange-100 text-amber-700 ring-1 ring-amber-200/80 dark:from-amber-500/20 dark:to-orange-500/15 dark:text-amber-300 dark:ring-amber-400/25"
+          />
+        </div>
+
+        {canAccessStudentPage(null, "materials", policy) && (
+          <section className="space-y-3">
+            <SectionTitle
+              action={
+                <Link href="/materials" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
+                  {t("common.viewAll")} <ForwardArrow />
+                </Link>
+              }
+            >
+              {locale === "ar" ? "مواد متاحة للزوار" : "Free Materials Open to Visitors"}
+            </SectionTitle>
+            {openMaterials.length === 0 ? (
+              <EmptyState icon="book" title={t("materials.empty")} />
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                {openMaterials.slice(0, 6).map((m) => {
+                  const title = tr(locale, m.title, m.titleAr);
+                  return (
+                    <Link
+                      key={m.id}
+                      href={`/materials/${m.slug}`}
+                      className="group overflow-hidden rounded-2xl bg-white shadow-xs ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md dark:bg-slate-900 dark:ring-slate-700"
+                    >
+                      <div className="aspect-[2/1] overflow-hidden">
+                        <MaterialThumb url={m.thumbnailUrl} title={title} className="transition duration-500 group-hover:scale-105" />
+                      </div>
+                      <div className="p-4">
+                        <p className="line-clamp-1 font-bold text-slate-900 dark:text-white">{title}</p>
+                        <p className="text-xs text-slate-500">
+                          {tr(locale, m.subject.name, m.subject.nameAr)} · {m.lessonCount} {t("common.lessons")}
+                        </p>
+                        <p className="mt-2 inline-flex items-center gap-1 text-xs font-bold text-navy-600 dark:text-sky-300">
+                          {t("materials.open")} <ForwardArrow />
+                        </p>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
+
+        {canAccessStudentPage(null, "tasks", policy) && visitorTasks.length > 0 && (
+          <section className="space-y-3">
+            <SectionTitle
+              action={
+                <Link href="/tasks" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
+                  {t("common.viewAll")} <ForwardArrow />
+                </Link>
+              }
+            >
+              {locale === "ar" ? "مهام تجريبية للزوار" : "Preview Tasks"}
+            </SectionTitle>
+            <div className="space-y-3">
+              {visitorTasks.slice(0, 3).map((task) => (
+                <Link key={task.id} href={`/tasks/${task.id}`} className="block">
+                  <Card className="p-5 transition hover:-translate-y-0.5 hover:shadow-md">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-lg font-bold text-slate-900 dark:text-white">
+                        {tr(locale, task.title, task.titleAr)}
+                      </p>
+                      <Badge tone="todo">{locale === "ar" ? "معاينة" : "Preview"}</Badge>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      <SubjectBadge icon={task.subject.icon} name={task.subject.name} size="xs" />
+                      <span>{tr(locale, task.subject.name, task.subject.nameAr)}</span>
+                    </div>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+      </>
+    );
+  }
+
+  if (!canAccessStudentPage(user, "dashboard", policy)) {
+    const fallback = firstAllowedPath(user, policy);
+    if (fallback !== "/dashboard") redirect(fallback);
+  }
+
+  const accountStatus = normalizeAccountStatus(user.accountStatus);
   const data = await getDashboardData(user.id);
 
-  // Pick the primary in-progress material for the Resume Card
-  const activeMaterial = data.myMaterials.find((m) => m.percent < 100) || data.myMaterials[0] || data.viewed[0];
+  const visibleTasks = canAccessStudentPage(user, "tasks", policy)
+    ? data.upcoming.filter((task) => canAccessTaskContent(user, task, policy))
+    : [];
+  const visibleMyMaterials = canAccessStudentPage(user, "materials", policy)
+    ? data.myMaterials.filter((m) => canAccessMaterialContent(user, m, policy))
+    : [];
+  const visibleViewed = canAccessStudentPage(user, "materials", policy)
+    ? data.viewed.filter((m) => canAccessMaterialContent(user, m, policy) || accountStatus === "approved")
+    : [];
+
+  const activeMaterial =
+    visibleMyMaterials.find((m) => m.percent < 100) ||
+    visibleMyMaterials[0] ||
+    visibleViewed.find((m) => canAccessMaterialContent(user, m, policy));
 
   return (
     <>
       <TopBar title={t("dashboard.title")} />
 
-      {/* Student Welcome Banner */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-navy-600 via-navy-500 to-blue-700 p-6 text-white shadow-xl shadow-navy-900/10">
-        <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      {/* Joyful Student Welcome Banner */}
+      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-navy-600 via-blue-600 to-sky-500 p-6 text-white shadow-xl shadow-navy-900/15 sm:p-7">
+        <div aria-hidden className="pointer-events-none absolute -end-8 -top-10 h-44 w-44 rounded-full bg-sun-400/20 blur-2xl" />
+        <div aria-hidden className="pointer-events-none absolute -bottom-12 start-1/3 h-40 w-40 rounded-full bg-cyan-300/20 blur-2xl" />
+        <div aria-hidden className="pointer-events-none absolute end-8 top-6 hidden text-white/15 md:block">
+          <Icon name="atom" className="h-24 w-24" />
+        </div>
+
+        <div className="relative z-10 flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-100 backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-sun-400 animate-pulse" />
-              {locale === "ar" ? "الفصل الدراسي الأول 2026" : "Academic Term 2026"}
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1 text-xs font-bold uppercase tracking-wider text-blue-50 ring-1 ring-white/20 backdrop-blur-sm">
+              <Icon name="sparkles" className="h-3.5 w-3.5 text-sun-400" />
+              {user.grade} · {locale === "ar" ? "الفصل الدراسي الأول 2026" : "Academic Term 2026"}
             </span>
-            <h2 className="mt-2 text-2xl sm:text-3xl font-extrabold tracking-tight">
-              {locale === "ar" ? `مرحباً بعودتك، ${user.fullName.split(" ")[0]}` : `Welcome back, ${user.fullName.split(" ")[0]}!`}
-            </h2>
-            <p className="mt-1 text-sm text-blue-100/90 max-w-xl">
+            <h2 className="mt-2.5 text-2xl font-extrabold tracking-tight sm:text-3xl">
               {locale === "ar"
-                ? "واصل تقدمك في المواد العلمية وأكمل مهامك لهذا الأسبوع."
-                : "Keep up the momentum in your science courses and stay on top of your weekly tasks."}
+                ? `مرحباً بعودتك، ${user.fullName.split(" ")[0]}`
+                : `Welcome back, ${user.fullName.split(" ")[0]}!`}
+            </h2>
+            <p className="mt-1 max-w-xl text-sm text-blue-50/95">
+              {accountStatus === "pending"
+                ? locale === "ar"
+                  ? "استكشف المواد المتاحة لك الآن ريثما يعتمد معلمك حسابك لفتح جميع المهام والدورات."
+                  : "Start exploring your open study materials while your teacher reviews and approves your account."
+                : locale === "ar"
+                  ? "واصل تقدمك في المواد العلمية وأكمل مهامك لهذا الأسبوع."
+                  : "Keep up the momentum in your science courses and stay on top of your weekly tasks."}
             </p>
           </div>
 
-          <div className="flex items-center gap-2 self-stretch sm:self-auto justify-end">
-            <Link
-              href="/tasks"
-              className="rounded-xl bg-sun-400 px-4 py-2.5 text-sm font-extrabold text-navy-800 shadow-md transition hover:bg-sun-500 active:scale-95"
-            >
-              {locale === "ar" ? "عرض المهام" : "My Tasks"}
-            </Link>
-            <Link
-              href="/materials"
-              className="rounded-xl bg-white/15 px-4 py-2.5 text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/25 active:scale-95"
-            >
-              {locale === "ar" ? "تصفح المواد" : "Browse"}
-            </Link>
+          <div className="flex items-center justify-end gap-2.5 self-stretch sm:self-auto">
+            {canAccessStudentPage(user, "tasks", policy) && (
+              <Link
+                href="/tasks"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-sun-400 px-4 py-2.5 text-sm font-extrabold text-navy-900 shadow-md transition hover:bg-sun-500 active:scale-95"
+              >
+                <Icon name="clipboard" className="h-4 w-4" />
+                {locale === "ar" ? "عرض المهام" : "My Tasks"}
+              </Link>
+            )}
+            {canAccessStudentPage(user, "materials", policy) && (
+              <Link
+                href="/materials"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-white/15 px-4 py-2.5 text-sm font-bold text-white ring-1 ring-white/25 backdrop-blur-sm transition hover:bg-white/25 active:scale-95"
+              >
+                <Icon name="flask" className="h-4 w-4" />
+                {locale === "ar" ? "تصفح المواد" : "Browse"}
+              </Link>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Quick stats */}
+      {/* Colorful Quick Stats */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <Stat label={t("dashboard.overview.active")} value={String(data.activeCount)} icon="📝" />
-        <Stat label={t("dashboard.overview.done")} value={String(data.doneCount)} icon="✅" />
-        <Stat label={t("dashboard.overview.materials")} value={String(data.myMaterials.length)} icon="📚" />
+        <Stat
+          label={t("dashboard.overview.active")}
+          value={String(accountStatus === "pending" ? visibleTasks.length : data.activeCount)}
+          icon="clipboard"
+          tone="bg-gradient-to-br from-sky-100 to-blue-100 text-sky-700 ring-1 ring-sky-200/80 dark:from-sky-500/20 dark:to-blue-500/15 dark:text-sky-300 dark:ring-sky-400/25"
+        />
+        <Stat
+          label={t("dashboard.overview.done")}
+          value={String(data.doneCount)}
+          icon="tasks"
+          tone="bg-gradient-to-br from-emerald-100 to-teal-100 text-emerald-700 ring-1 ring-emerald-200/80 dark:from-emerald-500/20 dark:to-teal-500/15 dark:text-emerald-300 dark:ring-emerald-400/25"
+        />
+        <Stat
+          label={t("dashboard.overview.materials")}
+          value={String(visibleMyMaterials.length)}
+          icon="book"
+          tone="bg-gradient-to-br from-violet-100 to-purple-100 text-violet-700 ring-1 ring-violet-200/80 dark:from-violet-500/20 dark:to-purple-500/15 dark:text-violet-300 dark:ring-violet-400/25"
+        />
         <Stat
           label={t("dashboard.overview.average")}
           value={data.overall == null ? "—" : `${data.overall}%`}
           badge={data.overall && data.overall >= 85 ? "A" : data.overall && data.overall >= 75 ? "B" : undefined}
-          icon="🏆"
+          icon="trophy"
+          tone="bg-gradient-to-br from-amber-100 to-orange-100 text-amber-700 ring-1 ring-amber-200/80 dark:from-amber-500/20 dark:to-orange-500/15 dark:text-amber-300 dark:ring-amber-400/25"
         />
       </div>
 
       {/* Active Material Spotlight */}
       {activeMaterial && (
-        <Card className="p-5 overflow-hidden border-2 border-blue-500/20 bg-gradient-to-br from-white to-blue-50/40 dark:from-slate-900 dark:to-slate-800/80">
-          <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-5">
-            <div className="flex items-center gap-4 min-w-0">
-              <div className="h-16 w-24 shrink-0 overflow-hidden rounded-xl">
+        <Card className="overflow-hidden border-2 border-blue-500/20 bg-gradient-to-br from-white via-sky-50/30 to-amber-50/30 p-5 dark:from-slate-900 dark:to-slate-800/80">
+          <div className="flex flex-col items-start justify-between gap-5 md:flex-row md:items-center">
+            <div className="flex min-w-0 items-center gap-4">
+              <div className="h-16 w-24 shrink-0 overflow-hidden rounded-xl shadow-xs">
                 <MaterialThumb
                   url={activeMaterial.thumbnailUrl}
                   title={tr(locale, activeMaterial.title, activeMaterial.titleAr)}
                 />
               </div>
               <div className="min-w-0">
-                <span className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 dark:text-blue-400">
+                  <Icon name="sparkles" className="h-3.5 w-3.5" />
                   {locale === "ar" ? "متابعة الدراسة" : "Continue Learning"}
                 </span>
                 <h3 className="truncate text-lg font-extrabold text-slate-900 dark:text-white">
@@ -98,9 +329,9 @@ export default async function DashboardPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
-              <div className="w-32 hidden sm:block">
-                <div className="flex justify-between text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+            <div className="flex w-full items-center justify-between gap-4 md:w-auto md:justify-end">
+              <div className="hidden w-32 sm:block">
+                <div className="mb-1 flex justify-between text-xs font-semibold text-slate-600 dark:text-slate-300">
                   <span>{t("materials.progress")}</span>
                   <span>{activeMaterial.percent}%</span>
                 </div>
@@ -108,10 +339,10 @@ export default async function DashboardPage() {
               </div>
               <Link
                 href={`/materials/${activeMaterial.slug}`}
-                className="inline-flex items-center gap-2 rounded-xl bg-navy-500 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-navy-500/20 hover:bg-navy-600 transition active:scale-95"
+                className="inline-flex items-center gap-2 rounded-xl bg-navy-500 px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-navy-500/20 transition hover:bg-navy-600 active:scale-95"
               >
                 <span>{locale === "ar" ? "متابعة الدرس" : "Resume Lesson"}</span>
-                <span>→</span>
+                <ForwardArrow />
               </Link>
             </div>
           </div>
@@ -119,114 +350,143 @@ export default async function DashboardPage() {
       )}
 
       {/* Tasks */}
-      <section className="space-y-3">
-        <SectionTitle
-          action={
-            <Link href="/tasks" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
-              {t("common.viewAll")} →
-            </Link>
-          }
-        >
-          {t("dashboard.tasks")}
-        </SectionTitle>
-        {data.upcoming.length === 0 ? (
-          <EmptyState icon="🎉" title={t("dashboard.noTasks")} />
-        ) : (
-          <div className="space-y-3">
-            {data.upcoming.map((task) => (
-              <Link key={task.id} href={`/tasks/${task.id}`} className="block">
-                <Card className="relative p-5 transition hover:shadow-md sm:p-6">
-                  <div className="absolute end-5 top-4">
-                    <Badge tone={task.overdue ? "overdue" : task.status}>
-                      {task.overdue ? t("tasks.overdue") : t(`status.${task.status}`)}
-                    </Badge>
-                  </div>
-                  <p className="pe-28 text-xl font-bold text-slate-900 dark:text-white">
-                    {tr(locale, task.title, task.titleAr)}
-                  </p>
-                  <p className="mt-1 text-base text-slate-700 dark:text-slate-300">
-                    {task.subject.icon} {tr(locale, task.subject.name, task.subject.nameAr)}
-                  </p>
-                  <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                    {t("common.date")}{" "}
-                    <span className="font-medium text-slate-700 dark:text-slate-300">
-                      {fmtDate(locale, task.dueDate)}
-                    </span>
-                  </p>
-                  {task.status === "in_progress" && (
-                    <ProgressBar percent={task.progress} className="mt-3 max-w-xs" />
-                  )}
-                  <div className="mt-3 flex items-center gap-3 text-xs font-semibold text-navy-500 dark:text-sky-300">
-                    <span>{t("tasks.openDetails")} →</span>
-                    {task.attachmentName && <span>📎 {t("tasks.attachment")}</span>}
-                    {task.hasSubmission && <span className="text-green-600">✓ {t("tasks.submitted")}</span>}
-                  </div>
-                </Card>
+      {canAccessStudentPage(user, "tasks", policy) && (
+        <section className="space-y-3">
+          <SectionTitle
+            action={
+              <Link href="/tasks" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
+                {t("common.viewAll")} <ForwardArrow />
               </Link>
-            ))}
-          </div>
-        )}
-      </section>
-
-      {/* Materials */}
-      <section className="space-y-3">
-        <SectionTitle
-          action={
-            <Link href="/materials" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
-              {t("common.viewAll")} →
-            </Link>
-          }
-        >
-          {t("dashboard.materials")}
-        </SectionTitle>
-        <SubHeading>{t("dashboard.lastViewed")}</SubHeading>
-        <Card className="p-4">
-          {data.viewed.length === 0 ? (
-            <div className="py-8 text-center">
-              <p className="text-slate-600 dark:text-slate-300">{t("dashboard.noViewed")}</p>
-              <Link
-                href="/materials"
-                className="mt-4 inline-block rounded-lg bg-navy-500 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-600"
-              >
-                {t("dashboard.browse")}
-              </Link>
-            </div>
+            }
+          >
+            {t("dashboard.tasks")}
+          </SectionTitle>
+          {visibleTasks.length === 0 ? (
+            <EmptyState icon="sparkles" title={t("dashboard.noTasks")} />
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {data.viewed.map((m) => {
-                const title = tr(locale, m.title, m.titleAr);
-                return (
-                  <Link
-                    key={m.id}
-                    href={`/materials/${m.slug}`}
-                    className="group overflow-hidden rounded-xl ring-1 ring-slate-200 transition hover:shadow-md dark:ring-slate-700"
-                  >
-                    <div className="aspect-[2/1] overflow-hidden">
-                      <MaterialThumb
-                        url={m.thumbnailUrl}
-                        title={title}
-                        className="transition duration-500 group-hover:scale-105"
-                      />
+            <div className="space-y-3">
+              {visibleTasks.map((task) => (
+                <Link key={task.id} href={`/tasks/${task.id}`} className="block">
+                  <Card className="relative p-5 transition hover:-translate-y-0.5 hover:shadow-md sm:p-6">
+                    <div className="absolute end-5 top-4 flex items-center gap-1.5">
+                      {task.isPersonal && (
+                        <Badge tone="personal">{locale === "ar" ? "مخصص لك" : "Personal"}</Badge>
+                      )}
+                      <Badge tone={task.overdue ? "overdue" : task.status}>
+                        {task.overdue ? t("tasks.overdue") : t(`status.${task.status}`)}
+                      </Badge>
                     </div>
-                    <div className="p-3">
-                      <p className="line-clamp-1 font-semibold text-slate-900 dark:text-white">{title}</p>
-                      <p className="text-xs text-slate-500">{tr(locale, m.subject.name, m.subject.nameAr)}</p>
-                      {m.purchased ? (
-                        <div className="mt-2 flex items-center gap-2">
-                          <ProgressBar percent={m.percent} />
-                          <span className="text-xs text-slate-500">{m.percent}%</span>
-                        </div>
-                      ) : (
-                        <p className="mt-2 text-xs font-semibold text-blue-600">{t("materials.buy")} →</p>
+                    <p className="pe-32 text-xl font-bold text-slate-900 dark:text-white">
+                      {tr(locale, task.title, task.titleAr)}
+                    </p>
+                    <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-slate-700 dark:text-slate-300">
+                      <SubjectBadge icon={task.subject.icon} name={task.subject.name} size="xs" />
+                      <span>{tr(locale, task.subject.name, task.subject.nameAr)}</span>
+                      {task.hasQuiz && (
+                        <Badge tone="todo">
+                          <Icon name="quiz" className="h-3 w-3" />
+                          {locale === "ar" ? "اختبار تفاعلي" : "Quiz"}
+                        </Badge>
                       )}
                     </div>
-                  </Link>
-                );
-              })}
+                    <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+                      {t("common.date")}{" "}
+                      <span className="font-medium text-slate-700 dark:text-slate-300">
+                        {fmtDate(locale, task.dueDate)}
+                      </span>
+                    </p>
+                    {task.status === "in_progress" && (
+                      <ProgressBar percent={task.progress} className="mt-3 max-w-xs" />
+                    )}
+                    <div className="mt-3 flex flex-wrap items-center gap-4 text-xs font-semibold text-navy-500 dark:text-sky-300">
+                      <span className="inline-flex items-center gap-1">
+                        {t("tasks.openDetails")} <ForwardArrow />
+                      </span>
+                      {task.attachmentName && (
+                        <span className="inline-flex items-center gap-1 text-slate-600 dark:text-slate-300">
+                          <Icon name="file" className="h-3.5 w-3.5" />
+                          {t("tasks.attachment")}
+                        </span>
+                      )}
+                      {task.hasSubmission && (
+                        <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                          <Icon name="check" className="h-3.5 w-3.5" />
+                          {t("tasks.submitted")}
+                        </span>
+                      )}
+                    </div>
+                  </Card>
+                </Link>
+              ))}
             </div>
           )}
-        </Card>
-      </section>
+        </section>
+      )}
+
+      {/* Materials */}
+      {canAccessStudentPage(user, "materials", policy) && (
+        <section className="space-y-3">
+          <SectionTitle
+            action={
+              <Link href="/materials" className="text-sm font-semibold text-navy-500 hover:underline dark:text-sky-300">
+                {t("common.viewAll")} <ForwardArrow />
+              </Link>
+            }
+          >
+            {t("dashboard.materials")}
+          </SectionTitle>
+          <SubHeading>{t("dashboard.lastViewed")}</SubHeading>
+          <Card className="p-4">
+            {visibleViewed.length === 0 ? (
+              <div className="py-8 text-center">
+                <p className="text-slate-600 dark:text-slate-300">{t("dashboard.noViewed")}</p>
+                <Link
+                  href="/materials"
+                  className="mt-4 inline-block rounded-lg bg-navy-500 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-600"
+                >
+                  {t("dashboard.browse")}
+                </Link>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                {visibleViewed.map((m) => {
+                  const title = tr(locale, m.title, m.titleAr);
+                  const canOpen = canAccessMaterialContent(user, m, policy);
+                  return (
+                    <Link
+                      key={m.id}
+                      href={`/materials/${m.slug}`}
+                      className="group overflow-hidden rounded-xl ring-1 ring-slate-200 transition hover:-translate-y-0.5 hover:shadow-md dark:ring-slate-700"
+                    >
+                      <div className="aspect-[2/1] overflow-hidden">
+                        <MaterialThumb
+                          url={m.thumbnailUrl}
+                          title={title}
+                          className="transition duration-500 group-hover:scale-105"
+                        />
+                      </div>
+                      <div className="p-3">
+                        <p className="line-clamp-1 font-semibold text-slate-900 dark:text-white">{title}</p>
+                        <p className="text-xs text-slate-500">{tr(locale, m.subject.name, m.subject.nameAr)}</p>
+                        {canOpen ? (
+                          <div className="mt-2 flex items-center gap-2">
+                            <ProgressBar percent={m.percent} />
+                            <span className="text-xs text-slate-500">{m.percent}%</span>
+                          </div>
+                        ) : (
+                          <p className="mt-2 text-xs font-semibold text-blue-600">
+                            {t("materials.buy")} <ForwardArrow />
+                          </p>
+                        )}
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            )}
+          </Card>
+        </section>
+      )}
     </>
   );
 }
@@ -235,22 +495,24 @@ function Stat({
   label,
   value,
   icon,
+  tone,
   badge,
 }: {
   label: string;
   value: string;
-  icon: string;
+  icon: IconName;
+  tone: string;
   badge?: string;
 }) {
   return (
-    <Card className="flex items-center gap-3 p-4">
-      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-navy-500/10 text-xl dark:bg-white/10">
-        {icon}
+    <Card className="flex items-center gap-3.5 p-4 transition hover:-translate-y-0.5 hover:shadow-md">
+      <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-2xl ${tone}`}>
+        <Icon name={icon} className="h-6 w-6" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">{label}</p>
+        <p className="truncate text-xs font-semibold text-slate-500 dark:text-slate-400">{label}</p>
         <div className="flex items-baseline gap-2">
-          <p className="text-2xl font-bold leading-tight text-slate-900 dark:text-white">{value}</p>
+          <p className="text-2xl font-extrabold leading-tight text-slate-900 dark:text-white">{value}</p>
           {badge && (
             <span className="rounded-md bg-emerald-100 px-1.5 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
               {badge}

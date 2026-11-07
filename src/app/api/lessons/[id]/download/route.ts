@@ -3,26 +3,61 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { lessons, purchases } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
+import { canAccessMaterialContent, getAccessPolicy } from "@/lib/access";
+import { downloadFromFilesBucket, guessMimeType, parseGoogleDriveUrl } from "@/lib/storage";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse("Unauthorized", { status: 401 });
+  const [user, policy] = await Promise.all([getCurrentUser(), getAccessPolicy()]);
   const { id } = await params;
-  const lesson = await db.query.lessons.findFirst({ where: eq(lessons.id, Number(id)), with: { material: true } });
+  const lesson = await db.query.lessons.findFirst({
+    where: eq(lessons.id, Number(id)),
+    with: { material: true },
+  });
   if (!lesson) return new NextResponse("Not found", { status: 404 });
 
-  const owned =
-    lesson.material.priceCents === 0 ||
-    (await db.query.purchases.findFirst({
-      where: and(eq(purchases.userId, user.id), eq(purchases.materialId, lesson.materialId)),
-    }));
-  if (!owned) return new NextResponse("Forbidden", { status: 403 });
+  const owned = !user
+    ? lesson.material.priceCents === 0 && Boolean(lesson.material.allowVisitors)
+    : user.role === "teacher" ||
+      lesson.material.priceCents === 0 ||
+      Boolean(
+        await db.query.purchases.findFirst({
+          where: and(eq(purchases.userId, user.id), eq(purchases.materialId, lesson.materialId)),
+        }),
+      );
+
+  if (
+    !owned ||
+    !canAccessMaterialContent(user, { ...lesson.material, purchased: Boolean(owned) }, policy)
+  ) {
+    return new NextResponse(user ? "Forbidden" : "Unauthorized", { status: user ? 403 : 401 });
+  }
+
+  if (lesson.material.storagePath) {
+    const cloud = await downloadFromFilesBucket(lesson.material.storagePath);
+    if (cloud) {
+      const safeName = (lesson.material.fileName || `${lesson.material.slug}.pdf`).replace(/[^a-zA-Z0-9._-]/g, "_");
+      const mime = guessMimeType(safeName, lesson.material.mimeType || cloud.contentType);
+      return new NextResponse(new Uint8Array(cloud.buffer), {
+        headers: {
+          "Content-Type": mime,
+          "Content-Disposition": `attachment; filename="${safeName}"`,
+        },
+      });
+    }
+  }
+
+  if (lesson.material.fileUrl) {
+    const drive = parseGoogleDriveUrl(lesson.material.fileUrl);
+    if (drive) {
+      return NextResponse.redirect(drive.downloadUrl);
+    }
+  }
 
   const file = [
     `${lesson.material.title} — ${lesson.title}`,
-    `in science · ${user.fullName} (ID: ${user.studentCode})`,
+    `in science · ${user ? `${user.fullName} (ID: ${user.studentCode})` : "Visitor Preview"}`,
     "",
     "=".repeat(48),
     "",

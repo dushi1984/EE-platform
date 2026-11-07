@@ -1,8 +1,9 @@
-import { db } from "@/db";
-import { count } from "drizzle-orm";
+import { db, pool } from "@/db";
+import { count, eq } from "drizzle-orm";
 import { grades, lessonProgress, lessons, materialViews, materials, purchases, quizQuestions, subjects, taskProgress, tasks, users } from "@/db/schema";
 import { hashPassword } from "@/lib/session";
-import { seedTeacherData } from "@/db/seed-teacher";
+import { seedTeacherData, TEACHER_CODE } from "@/db/seed-teacher";
+import { ensureSchema } from "@/db/bootstrap";
 
 export const DEMO_STUDENT_CODE = "12345";
 export const DEMO_QR_TOKEN = "FATMA-DEMO-2026";
@@ -28,10 +29,10 @@ const MATH_IMG = "https://images.pexels.com/photos/6238050/pexels-photo-6238050.
 const AVATAR_IMG = "https://images.pexels.com/photos/8199174/pexels-photo-8199174.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940";
 
 const seedSubjects = [
-  { name: "Chemistry", nameAr: "الكيمياء", color: "emerald", icon: "🧪" },
-  { name: "Physics", nameAr: "الفيزياء", color: "sky", icon: "⚛️" },
-  { name: "Biology", nameAr: "الأحياء", color: "rose", icon: "🧬" },
-  { name: "Mathematics", nameAr: "الرياضيات", color: "amber", icon: "📐" },
+  { name: "Chemistry", nameAr: "الكيمياء", color: "emerald", icon: "chemistry" },
+  { name: "Physics", nameAr: "الفيزياء", color: "sky", icon: "physics" },
+  { name: "Biology", nameAr: "الأحياء", color: "rose", icon: "biology" },
+  { name: "Mathematics", nameAr: "الرياضيات", color: "amber", icon: "mathematics" },
 ];
 
 const seedMaterials: SeedMaterial[] = [
@@ -330,7 +331,7 @@ const TASK_META: Record<string, { type: string; attachment?: string }> = {
   "Momentum conservation lab": { type: "lab", attachment: "momentum-data-sheet.txt" },
   "Limits homework": { type: "assignment" },
   "Atomic structure quiz": { type: "quiz" },
-  "Microscope drawing": { type: "worksheet", attachment: "microscope-template.txt" },
+  "Microscope drawing": { type: "worksheet", attachment: "microscope-diagram-guide.txt" },
   "Kinematics graphs worksheet": { type: "worksheet", attachment: "velocity-graphs.txt" },
   "Bonding summary poster": { type: "assignment" },
   "Genetics crosses practice": { type: "worksheet", attachment: "punnett-practice.txt" },
@@ -357,12 +358,76 @@ function attachmentBodyFor(title: string, description: string) {
 }
 
 let teacherSeeded = false;
-export async function ensureSeeded() {
-  await ensureBaseSeeded();
-  if (!teacherSeeded) {
-    await seedTeacherData();
-    teacherSeeded = true;
+let fullSeedPromise: Promise<void> | null = null;
+
+function isUndefinedTableError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  if ("code" in err && err.code === "42P01") return true;
+  if ("cause" in err && err.cause && typeof err.cause === "object" && "code" in err.cause && err.cause.code === "42P01") {
+    return true;
   }
+  return false;
+}
+
+export async function ensureSeeded() {
+  if (process.env.NEXT_PHASE === "phase-production-build") return;
+  if (seeded && teacherSeeded) return;
+  if (fullSeedPromise) return fullSeedPromise;
+
+  fullSeedPromise = (async () => {
+    try {
+      const existingTeacher = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.studentCode, TEACHER_CODE))
+        .limit(1);
+      if (existingTeacher.length > 0) {
+        seeded = true;
+        teacherSeeded = true;
+        return;
+      }
+    } catch (err) {
+      if (isUndefinedTableError(err)) {
+        await ensureSchema();
+      } else {
+        throw err;
+      }
+    }
+
+    const lockClient = await pool.connect();
+    try {
+      await lockClient.query("BEGIN");
+      await lockClient.query("SELECT pg_advisory_xact_lock(75827002)");
+
+      const recheck = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(eq(users.studentCode, TEACHER_CODE))
+        .limit(1);
+      if (recheck.length > 0) {
+        seeded = true;
+        teacherSeeded = true;
+        await lockClient.query("COMMIT");
+        return;
+      }
+
+      await ensureBaseSeeded();
+      if (!teacherSeeded) {
+        await seedTeacherData();
+        teacherSeeded = true;
+      }
+      await lockClient.query("COMMIT");
+    } catch (err) {
+      await lockClient.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      lockClient.release();
+    }
+  })().finally(() => {
+    fullSeedPromise = null;
+  });
+
+  return fullSeedPromise;
 }
 
 async function ensureBaseSeeded() {
@@ -395,7 +460,12 @@ async function ensureBaseSeeded() {
           priceCents: m.priceCents,
           isNew: m.isNew,
         })
+        .onConflictDoNothing()
         .returning();
+      if (!material) {
+        seeded = true;
+        return;
+      }
       materialIdBySlug.set(m.slug, material.id);
 
       const insertedLessons = await db

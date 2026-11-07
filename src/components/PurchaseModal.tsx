@@ -8,7 +8,7 @@ import { useI18n } from "@/lib/i18n-client";
 import { fmtMoney, tr } from "@/lib/i18n";
 import { checkoutAction, type CheckoutState } from "@/lib/actions";
 import { formatCardNumber } from "@/lib/gateway";
-import { Icon, Logo } from "@/components/ui";
+import { ForwardArrow, Icon, Logo, type IconName } from "@/components/ui";
 import { navigateWithSession } from "@/components/shell/Shell";
 
 export type PayMethod = "instapay" | "card" | "wallet";
@@ -77,7 +77,7 @@ function Overlay({ children, onClose }: { children: React.ReactNode; onClose: ()
     <div
       className="fixed inset-0 flex items-start justify-center overflow-y-auto bg-slate-900/65 p-4 backdrop-blur-sm sm:items-center"
       style={{ zIndex: 200 }}
-      onMouseDown={(e) => {
+      onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
@@ -229,7 +229,9 @@ function FreeCheckout({ materialId }: { materialId: number }) {
       <button type="submit" disabled={pending || navigated.current} className="mt-3 w-full rounded-2xl bg-blue-500 py-3.5 text-base font-bold text-white shadow-lg shadow-blue-500/30 transition hover:bg-blue-600 disabled:opacity-60">
         {pending ? locale === "ar" ? "جارٍ التسجيل…" : "Enrolling…" : locale === "ar" ? "تسجيل مجاني" : "Enrol for free"}
       </button>
-      <p className="mt-2 text-center text-[11px] text-slate-400">🔒 {t("purchase.secure")}</p>
+      <p className="mt-2 inline-flex w-full items-center justify-center gap-1 text-[11px] text-slate-400">
+        <Icon name="shield" className="h-3.5 w-3.5" /> {t("purchase.secure")}
+      </p>
     </form>
   );
 }
@@ -260,10 +262,10 @@ function PaidCheckout({
     if (state?.ok) setShowError(false);
   }, [state]);
 
-  const methods: { key: PayMethod; label: string; icon: string; hint: string }[] = [
-    { key: "card", label: t("purchase.card"), icon: "💳", hint: "Visa · Mastercard · Amex" },
-    { key: "instapay", label: t("purchase.instapay"), icon: "🏦", hint: locale === "ar" ? "تحويل بنكي فوري" : "Instant bank transfer" },
-    { key: "wallet", label: t("purchase.wallet"), icon: "📱", hint: locale === "ar" ? "محفظة الهاتف" : "Mobile wallet" },
+  const methods: { key: PayMethod; label: string; icon: IconName; hint: string }[] = [
+    { key: "card", label: t("purchase.card"), icon: "card", hint: "Visa · Mastercard · Amex" },
+    { key: "instapay", label: t("purchase.instapay"), icon: "bank", hint: locale === "ar" ? "تحويل بنكي فوري" : "Instant bank transfer" },
+    { key: "wallet", label: t("purchase.wallet"), icon: "wallet", hint: locale === "ar" ? "محفظة الهاتف" : "Mobile wallet" },
   ];
 
   const digits = cardNumber.replace(/\s/g, "");
@@ -289,7 +291,9 @@ function PaidCheckout({
               }`}
             >
               <input type="radio" name="methodPick" checked={method === m.key} onChange={() => setMethod(m.key)} className="h-4 w-4 accent-blue-600" />
-              <span className="text-lg">{m.icon}</span>
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-slate-100 text-navy-600 dark:bg-slate-800 dark:text-sky-300">
+                <Icon name={m.icon} className="h-4.5 w-4.5" />
+              </span>
               <span className="min-w-0 flex-1">
                 <span className="block font-semibold text-slate-900 dark:text-white">{m.label}</span>
                 <span className="block text-[11px] text-slate-500">{m.hint}</span>
@@ -373,7 +377,7 @@ function PaidCheckout({
 
       {showError && state?.stage === "failed" && (
         <div role="alert" className="flex items-start gap-2.5 rounded-xl bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 dark:bg-red-500/10 dark:text-red-300">
-          <span className="text-base leading-none">⚠️</span>
+          <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{state.error ?? (state.errorKey ? t(state.errorKey) : "")}</span>
         </div>
       )}
@@ -398,7 +402,9 @@ function PaidCheckout({
       </button>
 
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] leading-snug text-slate-400">🔒 {t("purchase.secure")}</p>
+        <p className="inline-flex items-center gap-1 text-[11px] leading-snug text-slate-400">
+          <Icon name="shield" className="h-3.5 w-3.5" /> {t("purchase.secure")}
+        </p>
       </div>
 
       <SuccessBridge state={state} />
@@ -426,7 +432,7 @@ function SuccessPanel({ result, name, onClose }: { result: PaidResult; name: str
         <Icon name="check" className="h-8 w-8" />
       </span>
       <h3 className="mt-3 text-lg font-bold text-slate-900 dark:text-white">
-        {locale === "ar" ? "تم الدفع بنجاح 🎉" : "Payment successful 🎉"}
+        {locale === "ar" ? "تم الدفع بنجاح" : "Payment successful"}
       </h3>
       <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{name}</p>
       {result.amountCents != null && result.amountCents > 0 && (
@@ -448,9 +454,10 @@ function SuccessPanel({ result, name, onClose }: { result: PaidResult; name: str
           <Link
             href={result.receiptUrl}
             target="_blank"
-            className="rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-xs font-bold text-blue-600 shadow-sm hover:bg-blue-50 dark:bg-slate-900 dark:text-blue-300"
           >
-            🧾 {locale === "ar" ? "الإيصال" : "Receipt"}
+            <Icon name="receipt" className="h-3.5 w-3.5" />
+            {locale === "ar" ? "الإيصال" : "Receipt"}
           </Link>
         )}
         <button
@@ -461,7 +468,7 @@ function SuccessPanel({ result, name, onClose }: { result: PaidResult; name: str
           }}
           className="rounded-lg bg-navy-500 px-4 py-2 text-xs font-bold text-white hover:bg-navy-600"
         >
-          {locale === "ar" ? "ابدأ التعلم" : "Start learning"} →
+          {locale === "ar" ? "ابدأ التعلم" : "Start learning"} <ForwardArrow />
         </button>
       </div>
     </div>

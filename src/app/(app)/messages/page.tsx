@@ -5,20 +5,33 @@ import { getCurrentUser } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { fmtDate } from "@/lib/i18n";
 import { tt } from "@/lib/i18n-teacher";
+import { canAccessStudentPage, firstAllowedPath, getAccessPolicy } from "@/lib/access";
 import { getMessagesForUser } from "@/lib/queries-teacher";
 import { markMessageReadAction } from "@/lib/teacher-actions";
 import { TopBar } from "@/components/shell/TopBar";
 import { Avatar, Badge, Card, Icon } from "@/components/ui";
 import { DownloadButton } from "@/components/TaskSubmissionForm";
 import { StudentMessageComposer } from "@/components/StudentMessageComposer";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export const metadata: Metadata = { title: "Messages" };
 
 export default async function MessagesPage() {
-  const user = await getCurrentUser();
+  const [user, policy, { locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
   if (!user) redirect("/login");
-  const { locale } = await getI18n();
   const c = tt(locale);
+  if (user.role === "student" && !canAccessStudentPage(user, "messages", policy)) {
+    return (
+      <>
+        <TopBar title={c.messages} />
+        <PageAccessNotice locale={locale} backHref={firstAllowedPath(user, policy)} />
+      </>
+    );
+  }
   const rows = await getMessagesForUser(user.id, user.role);
   const teacher = user.role === "teacher";
 
@@ -90,9 +103,10 @@ export default async function MessagesPage() {
                       {teacher && (
                         <Link
                           href={`/students/${m.studentId}/message`}
-                          className="rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-navy-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-sky-300"
+                          className="inline-flex items-center gap-1 rounded-lg bg-slate-100 px-3 py-1.5 text-xs font-bold text-navy-600 hover:bg-slate-200 dark:bg-slate-800 dark:text-sky-300"
                         >
-                          ↩ {locale === "ar" ? "رد" : "Reply"}
+                          <Icon name="reply" className="h-3.5 w-3.5" />
+                          {locale === "ar" ? "رد" : "Reply"}
                         </Link>
                       )}
                       <Badge tone={m.readAt ? "done" : "todo"}>{m.readAt ? c.read : c.unread}</Badge>

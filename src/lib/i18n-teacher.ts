@@ -60,6 +60,7 @@ const en = {
   recentGrades: "Recent grades",
   recentTasks: "Recent tasks",
   backToStudents: "Back to students",
+  backToTasks: "Back to tasks",
   noRecentGrades: "No grades recorded yet.",
   noRecentTasks: "No tasks assigned yet.",
   messages: "Messages",
@@ -115,10 +116,10 @@ const en = {
   description: "Description",
   descriptionPh: "Provide a brief description of the task",
   attachMaterials: "Attach Materials",
-  uploadHint: "Click to upload a file",
-  uploadLimit: "Any file up to 2 MB",
+  uploadHint: "Click to upload PDF, DOC, DOCX, or worksheet",
+  uploadLimit: "Saved in cloud storage (files bucket) · up to 25 MB",
   removeFile: "Remove file",
-  fileTooBig: "That file is larger than 2 MB.",
+  fileTooBig: "That file is larger than 25 MB.",
   taskTitleShort: "Please enter a task title (3+ characters).",
   dueRequired: "Please choose a due date.",
   typeRequired: "Please select a task type.",
@@ -136,6 +137,7 @@ const en = {
   fileSize: "File Size",
   free: "Free",
   pdf: "PDF",
+  doc: "DOC / Word",
   video: "Video",
   noMaterials: "No materials yet. Add your first material.",
   confirmDelete: "Delete this material and all of its lessons? This cannot be undone.",
@@ -149,7 +151,7 @@ const en = {
   matThumb: "Cover image URL (optional)",
   matVideo: "Video URL (YouTube / Vimeo)",
   matContent: "Lesson notes (Markdown)",
-  matFile: "Attach a file (optional, for size)",
+  matFile: "Upload PDF / DOC / DOCX to Cloud Storage (Supabase files bucket)",
   save: "Save",
   saving: "Saving…",
   titleShort: "Please enter a title (3+ characters).",
@@ -278,6 +280,7 @@ const ar: typeof en = {
   recentGrades: "أحدث الدرجات",
   recentTasks: "أحدث المهام",
   backToStudents: "العودة للطلاب",
+  backToTasks: "العودة للمهام",
   noRecentGrades: "لا توجد درجات مسجلة بعد.",
   noRecentTasks: "لا توجد مهام مسندة بعد.",
   messages: "الرسائل",
@@ -331,10 +334,10 @@ const ar: typeof en = {
   description: "الوصف",
   descriptionPh: "اكتب وصفاً مختصراً للمهمة",
   attachMaterials: "إرفاق ملفات",
-  uploadHint: "اضغط لرفع ملف",
-  uploadLimit: "أي ملف حتى 2 ميجابايت",
+  uploadHint: "اضغط لرفع ملف PDF أو DOC أو ورقة عمل",
+  uploadLimit: "يُحفظ في التخزين السحابي (files) · حتى 25 ميجابايت",
   removeFile: "إزالة الملف",
-  fileTooBig: "حجم الملف أكبر من 2 ميجابايت.",
+  fileTooBig: "حجم الملف أكبر من 25 ميجابايت.",
   taskTitleShort: "من فضلك أدخل عنوان المهمة (3 أحرف أو أكثر).",
   dueRequired: "من فضلك اختر تاريخ التسليم.",
   typeRequired: "من فضلك اختر نوع المهمة.",
@@ -351,6 +354,7 @@ const ar: typeof en = {
   fileSize: "حجم الملف",
   free: "مجاني",
   pdf: "PDF",
+  doc: "DOC / مستند Word",
   video: "فيديو",
   noMaterials: "لا توجد مواد بعد. أضف أول مادة.",
   confirmDelete: "هل تريد حذف هذه المادة وكل دروسها؟ لا يمكن التراجع.",
@@ -364,7 +368,7 @@ const ar: typeof en = {
   matThumb: "رابط صورة الغلاف (اختياري)",
   matVideo: "رابط الفيديو (YouTube / Vimeo)",
   matContent: "شرح الدرس (Markdown)",
-  matFile: "إرفاق ملف (اختياري، لحساب الحجم)",
+  matFile: "رفع ملف PDF / DOC / DOCX إلى سحابة Supabase (حاوية files)",
   save: "حفظ",
   saving: "جارٍ الحفظ…",
   titleShort: "من فضلك أدخل عنواناً (3 أحرف أو أكثر).",
@@ -448,6 +452,14 @@ export const GRADES = ["Grade 10", "Grade 11", "Grade 12"] as const;
 
 export function taskTypeLabel(locale: Locale, type: string) {
   return (dict[locale] as Record<string, string>)[`type_${type}`] ?? type;
+}
+
+export function gradeLabel(locale: Locale, grade: string) {
+  if (locale !== "ar") return grade;
+  if (grade === "Grade 10") return "الصف الأول الثانوي";
+  if (grade === "Grade 11") return "الصف الثاني الثانوي";
+  if (grade === "Grade 12") return "الصف الثالث الثانوي";
+  return grade;
 }
 
 export function timeAgo(locale: Locale, date: Date | string) {

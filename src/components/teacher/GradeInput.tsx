@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { useI18n } from "@/lib/i18n-client";
 import { tt } from "@/lib/i18n-teacher";
 import { gradeSubmissionAction } from "@/lib/teacher-actions";
+import { Icon } from "@/components/ui";
 import { reloadWithSession } from "@/components/shell/Shell";
 
 export function GradeInput({ taskId, userId, initial, max }: { taskId: number; userId: number; initial: number | null; max: number }) {
@@ -57,7 +58,7 @@ export function GradeInput({ taskId, userId, initial, max }: { taskId: number; u
           {pending ? "…" : c.saveScore}
         </button>
       )}
-      {justSaved && !changed && <span className="text-xs font-bold text-green-600">✓</span>}
+      {justSaved && !changed && <Icon name="check" className="h-4 w-4 text-green-600" />}
     </div>
   );
 }

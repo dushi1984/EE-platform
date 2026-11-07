@@ -1,7 +1,7 @@
 "use server";
 
 import { db } from "@/db";
-import { grades, lessonProgress, lessons, materials, messages, payments, purchases, quizAttempts, quizQuestions, taskProgress, taskSubmissions, tasks, users, type PaymentMethod } from "@/db/schema";
+import { academicLevels, grades, lessonProgress, lessons, materials, messages, payments, purchases, quizAttempts, quizQuestions, taskProgress, taskSubmissions, tasks, users, type PaymentMethod } from "@/db/schema";
 import { and, eq, or, sql } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -12,6 +12,19 @@ import { LOCALE_COOKIE, THEME_COOKIE } from "./i18n-server";
 import { DEMO_STUDENT_CODE, ensureSeeded } from "@/db/seed";
 import { cardBrand, gatewayAuthorize, isExpired, luhnValid, type Method } from "./gateway";
 import type { TKey } from "./i18n";
+import { GRADES, gradeLabel } from "./i18n-teacher";
+import {
+  canAccessMaterialContent,
+  canAccessStudentPage,
+  canAccessTaskContent,
+  canPurchaseMaterials,
+  canSubmitTasks,
+  firstAllowedPath,
+  getAccessPolicy,
+  normalizeAccountStatus,
+} from "./access";
+import { notifyTeachers, notifyUsers } from "./notifications";
+import { taskAppliesToStudent } from "./queries";
 
 export type ActionState = { error?: TKey; success?: TKey } | null;
 
@@ -42,7 +55,7 @@ export async function registerAction(_prev: ActionState, formData: FormData): Pr
   const fullName = str(formData, "fullName").replace(/\s+/g, " ");
   const parentPhone = str(formData, "parentPhone");
   const contact = str(formData, "contact").toLowerCase();
-  const code = str(formData, "code");
+  const gradeInput = str(formData, "grade");
   const password = String(formData.get("password") ?? "");
   const confirm = String(formData.get("confirmPassword") ?? "");
 
@@ -51,17 +64,27 @@ export async function registerAction(_prev: ActionState, formData: FormData): Pr
   const email = EMAIL_RE.test(contact) ? contact : null;
   const phone = !email && isPhone(contact) ? normalizePhone(contact) : null;
   if (!email && !phone) return { error: "errors.contact" };
-  if (!/^[A-Za-z0-9-]{4,12}$/.test(code)) return { error: "errors.code" };
+  if (!gradeInput) return { error: "errors.gradeRequired" };
   if (password.length < 6) return { error: "errors.password" };
   if (password !== confirm) return { error: "errors.passwordMatch" };
 
   await ensureSeeded();
-  const codeTaken = await db.query.users.findFirst({ where: eq(users.studentCode, code) });
-  if (codeTaken) return { error: "errors.codeTaken" };
+  const knownLevels = await db.select().from(academicLevels);
+  const validGrades = new Set<string>([...GRADES, ...knownLevels.map((l) => l.name)]);
+  if (!validGrades.has(gradeInput)) return { error: "errors.gradeRequired" };
+
   const contactTaken = await db.query.users.findFirst({
     where: email ? eq(users.email, email) : eq(users.phone, phone!),
   });
   if (contactTaken) return { error: "errors.contactTaken" };
+
+  const [last] = await db.select({ id: users.id }).from(users).orderBy(sql`${users.id} desc`).limit(1);
+  let studentCode = `S${String((last?.id ?? 0) + 20260)}`;
+  for (let i = 0; i < 8; i++) {
+    const taken = await db.query.users.findFirst({ where: eq(users.studentCode, studentCode) });
+    if (!taken) break;
+    studentCode = `S${Math.floor(100000 + Math.random() * 900000)}`;
+  }
 
   const [user] = await db
     .insert(users)
@@ -70,14 +93,39 @@ export async function registerAction(_prev: ActionState, formData: FormData): Pr
       email,
       phone,
       parentPhone: normalizePhone(parentPhone),
-      studentCode: code,
+      studentCode,
+      grade: gradeInput,
+      accountStatus: "pending",
+      approvedAt: null,
       passwordHash: hashPassword(password),
       qrToken: generateQrToken(),
+      lastLoginAt: new Date(),
     })
     .returning();
 
+  const arGrade = knownLevels.find((l) => l.name === gradeInput)?.nameAr || gradeLabel("ar", gradeInput);
+  await Promise.all([
+    notifyTeachers({
+      kind: "student",
+      title: `New student signup awaiting approval: ${fullName} (${gradeInput})`,
+      titleAr: `طالب جديد بانتظار الموافقة: ${fullName} (${arGrade})`,
+      body: `Contact: ${email || phone} · Parent: ${normalizePhone(parentPhone)} — Click to approve, suspend, block, or send a message.`,
+      bodyAr: `التواصل: ${email || phone} · ولي الأمر: ${normalizePhone(parentPhone)} — اضغط للموافقة أو الإيقاف أو الحظر أو إرسال رسالة.`,
+      href: `/students/${user.id}`,
+    }),
+    notifyUsers([user.id], {
+      kind: "system",
+      title: `Welcome, ${fullName.split(" ")[0]}! Signup received`,
+      titleAr: `أهلاً بك يا ${fullName.split(" ")[0]}! تم استلام تسجيلك`,
+      body: "You can explore teacher-selected pages and materials now. Full features unlock once your teacher approves your account.",
+      bodyAr: "يمكنك الآن تصفح الصفحات والمواد التي أتاحها المعلم، وستُفتح كافة المزايا فور موافقة المعلم على حسابك.",
+      href: "/dashboard",
+    }),
+  ]).catch(() => {});
+
+  const policy = await getAccessPolicy();
   await setSession(user.id);
-  redirect("/dashboard");
+  redirect(firstAllowedPath(user, policy));
 }
 
 export async function loginAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
@@ -93,9 +141,14 @@ export async function loginAction(_prev: ActionState, formData: FormData): Promi
     where: or(eq(sql`lower(${users.email})`, lower), eq(users.phone, phone), eq(users.studentCode, identifier)),
   });
   if (!user || !verifyPassword(password, user.passwordHash)) return { error: "errors.invalidCredentials" };
+  if (user.role === "student" && normalizeAccountStatus(user.accountStatus) === "blocked") {
+    return { error: "errors.accountBlocked" };
+  }
 
+  const policy = await getAccessPolicy();
   await setSession(user.id);
-  redirect(next.startsWith("/") ? next : "/dashboard");
+  const defaultDest = firstAllowedPath(user, policy);
+  redirect(next.startsWith("/") && next !== "/dashboard" ? next : defaultDest);
 }
 
 export async function demoLoginAction() {
@@ -217,6 +270,14 @@ export async function checkoutAction(_prev: CheckoutState, formData: FormData): 
   const locale = (await cookies()).get(LOCALE_COOKIE)?.value === "ar" ? "ar" : "en";
   const fail = (msg?: string, key?: TKey) => ({ ok: false, stage: "failed" as const, error: msg, errorKey: key });
 
+  const policy = await getAccessPolicy();
+  if (!canAccessMaterialContent(user, material, policy)) {
+    return fail(locale === "ar" ? "يتطلب هذا المحتوى موافقة المعلم على حسابك." : "This content requires teacher approval.");
+  }
+  if (material.priceCents > 0 && !canPurchaseMaterials(user, policy)) {
+    return fail(locale === "ar" ? "يُفعل شراء المواد المدفوعة بعد موافقة المعلم على حسابك." : "Paid purchases unlock once your teacher approves your account.");
+  }
+
   // Free material — bypass the gateway entirely
   if (material.priceCents === 0) {
     await db
@@ -226,6 +287,14 @@ export async function checkoutAction(_prev: CheckoutState, formData: FormData): 
         target: [purchases.userId, purchases.materialId],
         set: { paymentMethod: "free", status: "paid", purchasedAt: new Date() },
       });
+    await notifyUsers([user.id], {
+      kind: "material",
+      title: `Enrolled in ${material.title}`,
+      titleAr: `تم التسجيل في ${material.titleAr || material.title}`,
+      body: "You now have full access to all lessons and files.",
+      bodyAr: "لديك الآن وصول كامل إلى جميع الدروس والملفات.",
+      href: `/materials/${material.slug}`,
+    }).catch(() => {});
     revalidatePath("/materials");
     revalidatePath(`/materials/${material.slug}`);
     revalidatePath("/dashboard");
@@ -326,6 +395,25 @@ export async function checkoutAction(_prev: CheckoutState, formData: FormData): 
       set: { pricePaidCents: amount, paymentMethod: method as PaymentMethod, status: "paid", purchasedAt: new Date() },
     });
 
+  await Promise.all([
+    notifyUsers([user.id], {
+      kind: "payment",
+      title: `Unlocked: ${material.title}`,
+      titleAr: `تم فتح المادة: ${material.titleAr || material.title}`,
+      body: `Reference ${reference} · Full access unlocked.`,
+      bodyAr: `مرجع العملية ${reference} · تم تفعيل الوصول الكامل.`,
+      href: `/materials/${material.slug}`,
+    }),
+    notifyTeachers({
+      kind: "payment",
+      title: `${user.fullName} purchased ${material.title}`,
+      titleAr: `قام ${user.fullName} بشراء ${material.titleAr || material.title}`,
+      body: `Ref ${reference} · ${label}`,
+      bodyAr: `المرجع ${reference} · ${label}`,
+      href: "/payments",
+    }),
+  ]).catch(() => {});
+
   revalidatePath("/materials");
   revalidatePath(`/materials/${material.slug}`);
   revalidatePath("/dashboard");
@@ -348,6 +436,9 @@ export async function purchaseAction(formData: FormData) {
   const materialId = Number(formData.get("materialId"));
   const material = await db.query.materials.findFirst({ where: eq(materials.id, materialId) });
   if (!material) return { ok: false };
+  const policy = await getAccessPolicy();
+  if (!canAccessMaterialContent(user, material, policy)) return { ok: false };
+  if (material.priceCents > 0 && !canPurchaseMaterials(user, policy)) return { ok: false };
   const rawMethod = str(formData, "paymentMethod");
   const paymentMethod: PaymentMethod =
     rawMethod === "instapay" || rawMethod === "card" || rawMethod === "wallet" || rawMethod === "free"
@@ -440,10 +531,130 @@ export async function submitQuizAction(_prev: QuizResult, formData: FormData): P
   if (score === total || score / total >= 0.5) {
     await db.insert(lessonProgress).values({ userId: user.id, lessonId }).onConflictDoNothing();
   }
+  await notifyTeachers({
+    kind: "quiz",
+    title: `${user.fullName} completed quiz: ${lesson.title}`,
+    titleAr: `أنهى ${user.fullName} اختبار: ${lesson.titleAr || lesson.title}`,
+    body: `Score: ${score}/${total}`,
+    bodyAr: `النتيجة: ${score}/${total}`,
+    href: `/students/${user.id}`,
+  }).catch(() => {});
   revalidatePath(`/materials/${lesson.material.slug}`, "layout");
   revalidatePath("/grades");
   revalidatePath("/dashboard");
   return { score, total, results };
+}
+
+export type TaskQuizSubmitResult = {
+  ok: boolean;
+  score: number;
+  maxScore: number;
+  correctCount: number;
+  total: number;
+  results: { questionId: number; correct: boolean; correctIndex: number; explanation: string | null }[];
+} | null;
+
+export async function submitTaskQuizAction(taskId: number, answers: Record<number, number>): Promise<TaskQuizSubmitResult> {
+  const user = await getCurrentUser();
+  if (!user || user.role !== "student") return null;
+  const policy = await getAccessPolicy();
+  if (!canSubmitTasks(user, policy)) return null;
+
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!task || task.status === "closed" || !task.quizQuestions?.length) return null;
+  if (!taskAppliesToStudent(task, user) || !canAccessTaskContent(user, task, policy)) return null;
+
+  const questions = task.quizQuestions;
+  const results = questions.map((q) => {
+    const picked = Number(answers[q.id]);
+    return {
+      questionId: q.id,
+      correct: picked === q.correctIndex,
+      correctIndex: q.correctIndex,
+      explanation: q.explanation ?? null,
+    };
+  });
+  const correctCount = results.filter((r) => r.correct).length;
+  const total = questions.length;
+  const scaledScore = Math.round((correctCount / total) * task.maxScore);
+  const now = new Date();
+
+  await db
+    .insert(taskSubmissions)
+    .values({
+      userId: user.id,
+      taskId: task.id,
+      fileName: "online-quiz-attempt.txt",
+      note: `Online Quiz: ${correctCount}/${total} correct (${scaledScore}/${task.maxScore})`,
+      quizAnswers: answers,
+      score: scaledScore,
+      gradedAt: now,
+      submittedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: [taskSubmissions.userId, taskSubmissions.taskId],
+      set: {
+        fileName: "online-quiz-attempt.txt",
+        note: `Online Quiz: ${correctCount}/${total} correct (${scaledScore}/${task.maxScore})`,
+        quizAnswers: answers,
+        score: scaledScore,
+        gradedAt: now,
+        submittedAt: now,
+      },
+    });
+
+  await db
+    .insert(taskProgress)
+    .values({ userId: user.id, taskId: task.id, status: "done", progress: 100 })
+    .onConflictDoUpdate({
+      target: [taskProgress.userId, taskProgress.taskId],
+      set: { status: "done", progress: 100, updatedAt: now },
+    });
+
+  const existingGrade = await db.query.grades.findFirst({
+    where: and(eq(grades.userId, user.id), eq(grades.taskId, task.id)),
+  });
+  if (existingGrade) {
+    await db
+      .update(grades)
+      .set({ score: scaledScore, maxScore: task.maxScore, gradedAt: now })
+      .where(eq(grades.id, existingGrade.id));
+  } else {
+    await db.insert(grades).values({
+      userId: user.id,
+      subjectId: task.subjectId,
+      taskId: task.id,
+      title: task.title,
+      titleAr: task.titleAr,
+      kind: "quiz",
+      score: scaledScore,
+      maxScore: task.maxScore,
+      gradedAt: now,
+    });
+  }
+
+  await notifyTeachers({
+    kind: "quiz",
+    title: `${user.fullName} completed quiz: ${task.title}`,
+    titleAr: `أكمل ${user.fullName} الاختبار: ${task.titleAr || task.title}`,
+    body: `Auto-graded score: ${scaledScore}/${task.maxScore} (${correctCount}/${total})`,
+    bodyAr: `الدرجة التلقائية: ${scaledScore}/${task.maxScore} (${correctCount}/${total})`,
+    href: `/tasks?task=${task.id}&tab=graded`,
+  }).catch(() => {});
+
+  revalidatePath(`/tasks/${task.id}`);
+  revalidatePath("/tasks");
+  revalidatePath("/grades");
+  revalidatePath("/dashboard");
+
+  return {
+    ok: true,
+    score: scaledScore,
+    maxScore: task.maxScore,
+    correctCount,
+    total,
+    results,
+  };
 }
 
 /* ---------- Profile ---------- */
@@ -539,6 +750,10 @@ export async function removeSubmissionAction(_formData: FormData) {
 export async function sendStudentMessageAction(_prev: ActionState, formData: FormData): Promise<ActionState> {
   const user = await getCurrentUser();
   if (!user) return { error: "common.errorGeneric" };
+  const policy = await getAccessPolicy();
+  if (user.role === "student" && (normalizeAccountStatus(user.accountStatus) === "blocked" || !canAccessStudentPage(user, "messages", policy))) {
+    return { error: "common.errorGeneric" };
+  }
   const body = str(formData, "body");
   const attachmentName = str(formData, "attachmentName");
   const attachmentData = str(formData, "attachmentData");

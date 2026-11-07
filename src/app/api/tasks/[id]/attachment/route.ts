@@ -3,26 +3,62 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { tasks } from "@/db/schema";
 import { getCurrentUser } from "@/lib/session";
+import { canAccessStudentPage, canAccessTaskContent, getAccessPolicy } from "@/lib/access";
 import { parseDataUrl } from "@/lib/dataurl";
+import { downloadFromFilesBucket, guessMimeType, parseGoogleDriveUrl } from "@/lib/storage";
+import { taskAppliesToStudent } from "@/lib/queries";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
-  const user = await getCurrentUser();
-  if (!user) return new NextResponse("Unauthorized", { status: 401 });
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const [user, policy] = await Promise.all([getCurrentUser(), getAccessPolicy()]);
   const { id } = await params;
+  const inline = new URL(req.url).searchParams.get("inline") === "1";
+
   const task = await db.query.tasks.findFirst({ where: eq(tasks.id, Number(id)), with: { subject: true } });
   if (!task) return new NextResponse("Not found", { status: 404 });
 
-  const name = (task.attachmentName || `task-${task.id}-worksheet.txt`).replace(/[^a-zA-Z0-9._-]/g, "_");
+  if (!user) {
+    if (!canAccessStudentPage(null, "tasks", policy) || !canAccessTaskContent(null, task, policy)) {
+      return new NextResponse("Unauthorized", { status: 401 });
+    }
+  } else if (user.role === "student") {
+    if (
+      !canAccessStudentPage(user, "tasks", policy) ||
+      !taskAppliesToStudent(task, user) ||
+      !canAccessTaskContent(user, task, policy)
+    ) {
+      return new NextResponse("Forbidden", { status: 403 });
+    }
+  }
 
-  // Real uploaded file (stored as a data URL by the teacher)
+  const name = (task.attachmentName || `task-${task.id}-attachment.txt`).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const disp = inline ? "inline" : "attachment";
+
+  if (task.attachmentStoragePath) {
+    const cloud = await downloadFromFilesBucket(task.attachmentStoragePath);
+    if (cloud) {
+      const mime = guessMimeType(name, task.attachmentMime || cloud.contentType);
+      return new NextResponse(new Uint8Array(cloud.buffer), {
+        headers: {
+          "Content-Type": mime,
+          "Content-Disposition": `${disp}; filename="${name}"`,
+        },
+      });
+    }
+  }
+
+  if (task.attachmentUrl) {
+    const drive = parseGoogleDriveUrl(task.attachmentUrl);
+    return NextResponse.redirect(drive ? (inline ? drive.previewUrl : drive.downloadUrl) : task.attachmentUrl);
+  }
+
   const uploaded = parseDataUrl(task.attachmentBody);
   if (uploaded) {
     return new NextResponse(new Uint8Array(uploaded.buffer), {
       headers: {
         "Content-Type": uploaded.mime,
-        "Content-Disposition": `attachment; filename="${name}"`,
+        "Content-Disposition": `${disp}; filename="${name}"`,
       },
     });
   }
@@ -32,7 +68,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     `in science — ${task.subject.name}`,
     `Task: ${task.title}`,
     `Due: ${new Date(task.dueDate).toLocaleDateString("en-GB")}`,
-    `Student: ${user.fullName} (ID: ${user.studentCode})`,
+    `Student: ${user ? `${user.fullName} (ID: ${user.studentCode})` : "Visitor Preview"}`,
     "",
     "=".repeat(48),
     "",
@@ -42,7 +78,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   return new NextResponse(file, {
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${name}"`,
+      "Content-Disposition": `${disp}; filename="${name}"`,
     },
   });
 }

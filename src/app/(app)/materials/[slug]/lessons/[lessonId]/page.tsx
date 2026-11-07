@@ -4,18 +4,24 @@ import type { Metadata } from "next";
 import { getCurrentUser, sessionPath } from "@/lib/session";
 import { getI18n } from "@/lib/i18n-server";
 import { tr } from "@/lib/i18n";
+import {
+  canAccessMaterialContent,
+  canAccessStudentPage,
+  canSubmitTasks,
+  getAccessPolicy,
+} from "@/lib/access";
 import { getMaterialBySlug } from "@/lib/queries";
 import { TopBar } from "@/components/shell/TopBar";
-import { Card, Icon, ProgressBar, SectionTitle } from "@/components/ui";
+import { BackArrow, Card, CrumbSep, ForwardArrow, Icon, ProgressBar, SectionTitle } from "@/components/ui";
 import { Markdown } from "@/components/Markdown";
 import { QuizRunner } from "@/components/QuizRunner";
 import { LessonFinishCheckbox, VideoPlayer } from "@/components/VideoPlayer";
+import { PageAccessNotice } from "@/components/PageAccessNotice";
 
 export async function generateMetadata({ params }: { params: Promise<{ slug: string; lessonId: string }> }): Promise<Metadata> {
   const { slug, lessonId } = await params;
   const user = await getCurrentUser();
-  if (!user) return { title: "Lesson" };
-  const m = await getMaterialBySlug(slug, user.id);
+  const m = await getMaterialBySlug(slug, user ? user.id : -1);
   const l = m?.lessons.find((x) => x.id === Number(lessonId));
   return { title: l ? `${l.title} · ${m!.title}` : "Lesson" };
 }
@@ -29,12 +35,25 @@ export default async function LessonPage({
 }) {
   const { slug, lessonId } = await params;
   const { step } = await searchParams;
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-  const { t, locale } = await getI18n();
-  const material = await getMaterialBySlug(slug, user.id);
+  const [user, policy, { t, locale }] = await Promise.all([
+    getCurrentUser(),
+    getAccessPolicy(),
+    getI18n(),
+  ]);
+
+  if (!user && !canAccessStudentPage(null, "materials", policy)) {
+    redirect(`/login?next=${encodeURIComponent(`/materials/${slug}`)}`);
+  }
+  if (user?.role === "student" && !canAccessStudentPage(user, "materials", policy)) {
+    redirect(await sessionPath("/dashboard"));
+  }
+
+  const material = await getMaterialBySlug(slug, user ? user.id : -1);
   if (!material) notFound();
-  if (!material.purchased) redirect(await sessionPath(`/materials/${slug}`));
+  if (!canAccessMaterialContent(user, material, policy)) {
+    redirect(user ? await sessionPath(`/materials/${slug}`) : `/materials/${slug}`);
+  }
+  const canInteractive = Boolean(user && canSubmitTasks(user, policy));
 
   const idx = material.lessons.findIndex((l) => l.id === Number(lessonId));
   if (idx === -1) notFound();
@@ -58,7 +77,7 @@ export default async function LessonPage({
           <Link href={`/materials/${material.slug}`} className="font-medium text-navy-500 hover:underline dark:text-sky-300">
             {t("materials.title")}
           </Link>
-          <span className="text-slate-400">›</span>
+          <CrumbSep />
           {showQuiz ? (
             <Link
               href={`/materials/${material.slug}/lessons/${lesson.id}`}
@@ -71,7 +90,7 @@ export default async function LessonPage({
           )}
           {showQuiz && (
             <>
-              <span className="text-slate-400">›</span>
+              <CrumbSep />
               <span>{t("lesson.quizStep")}</span>
             </>
           )}
@@ -84,7 +103,7 @@ export default async function LessonPage({
           <Card className="overflow-hidden">
             <div className="border-b border-slate-100 p-4 dark:border-slate-800">
               <Link href={`/materials/${material.slug}`} className="text-xs font-semibold text-navy-500 hover:underline dark:text-sky-300">
-                ← {t("lesson.backToMaterial")}
+                <BackArrow /> {t("lesson.backToMaterial")}
               </Link>
               <div className="mt-3 flex items-center gap-3">
                 <ProgressBar percent={percent} className="flex-1" />
@@ -102,7 +121,7 @@ export default async function LessonPage({
                       className={`flex items-start gap-3 rounded-xl px-3 py-2.5 text-sm transition ${isCurrent ? "bg-sun-400/90 font-semibold text-navy-800" : "text-slate-700 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"}`}
                     >
                       <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-bold ${isDone ? "bg-green-500 text-white" : isCurrent ? "bg-navy-500 text-white" : "bg-slate-200 text-slate-600 dark:bg-slate-700 dark:text-slate-200"}`}>
-                        {isDone ? "✓" : i + 1}
+                        {isDone ? <Icon name="check" className="h-3 w-3" /> : i + 1}
                       </span>
                       <span className="flex-1">
                         <span className="block leading-snug">{tr(locale, l.title, l.titleAr)}</span>
@@ -121,13 +140,21 @@ export default async function LessonPage({
         {/* Content */}
         <article className="min-w-0 space-y-5">
           {showQuiz ? (
-            <QuizRunner
-              lessonId={lesson.id}
-              lessonTitle={lessonTitle}
-              questions={publicQuestions}
-              nextHref={next ? `/materials/${material.slug}/lessons/${next.id}` : null}
-              materialHref={`/materials/${material.slug}`}
-            />
+            canInteractive ? (
+              <QuizRunner
+                lessonId={lesson.id}
+                lessonTitle={lessonTitle}
+                questions={publicQuestions}
+                nextHref={next ? `/materials/${material.slug}/lessons/${next.id}` : null}
+                materialHref={`/materials/${material.slug}`}
+              />
+            ) : (
+              <PageAccessNotice
+                locale={locale}
+                backHref={`/materials/${material.slug}/lessons/${lesson.id}`}
+                mode={user ? "pending" : "visitor"}
+              />
+            )
           ) : (
             <>
               <div>
@@ -147,13 +174,21 @@ export default async function LessonPage({
               />
 
               <Card className="flex flex-col items-center gap-4 p-5 text-center">
-                <LessonFinishCheckbox
-                  lessonId={lesson.id}
-                  slug={material.slug}
-                  initialCompleted={completed}
-                  label={t("lesson.signFinished")}
-                />
-                {lesson.questions.length > 0 ? (
+                {user ? (
+                  <LessonFinishCheckbox
+                    lessonId={lesson.id}
+                    slug={material.slug}
+                    initialCompleted={completed}
+                    label={t("lesson.signFinished")}
+                  />
+                ) : (
+                  <p className="text-sm font-semibold text-slate-600 dark:text-slate-300">
+                    {locale === "ar"
+                      ? "أنشئ حساب طالب لحفظ تقدمك وحل الاختبارات التفاعلية."
+                      : "Create a student account to save lesson progress and take interactive quizzes."}
+                  </p>
+                )}
+                {lesson.questions.length > 0 && canInteractive ? (
                   <Link
                     href={`/materials/${material.slug}/lessons/${lesson.id}?step=quiz`}
                     className="rounded-xl bg-blue-500 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600"
@@ -162,7 +197,7 @@ export default async function LessonPage({
                   </Link>
                 ) : next ? (
                   <Link href={`/materials/${material.slug}/lessons/${next.id}`} className="rounded-xl bg-blue-500 px-8 py-3 font-semibold text-white shadow-lg shadow-blue-500/30 hover:bg-blue-600">
-                    {t("lesson.next")} →
+                    {t("lesson.next")} <ForwardArrow />
                   </Link>
                 ) : null}
               </Card>
@@ -187,7 +222,7 @@ export default async function LessonPage({
                 <div>
                   {prev ? (
                     <Link href={`/materials/${material.slug}/lessons/${prev.id}`} className="text-sm font-medium text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white">
-                      ← {t("lesson.prev")}: {tr(locale, prev.title, prev.titleAr)}
+                      <BackArrow /> {t("lesson.prev")}: {tr(locale, prev.title, prev.titleAr)}
                     </Link>
                   ) : (
                     <span className="text-sm text-slate-400">—</span>
@@ -201,7 +236,7 @@ export default async function LessonPage({
                   )}
                   {next && (
                     <Link href={`/materials/${material.slug}/lessons/${next.id}`} className="rounded-xl bg-navy-500 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-600">
-                      {t("lesson.next")} →
+                      {t("lesson.next")} <ForwardArrow />
                     </Link>
                   )}
                 </div>
@@ -209,19 +244,23 @@ export default async function LessonPage({
 
               {percent === 100 && (
                 <div className="rounded-2xl bg-gradient-to-br from-green-500 to-teal-600 p-6 text-white shadow-lg">
-                  <h3 className="text-xl font-bold">🎓 {t("lesson.finished")}</h3>
+                  <h3 className="flex items-center gap-2 text-xl font-bold">
+                    <Icon name="graduation" className="h-6 w-6" />
+                    {t("lesson.finished")}
+                  </h3>
                   <p className="mt-1 text-green-50">{t("lesson.finishedBody")}</p>
-              <div className="mt-4 flex flex-wrap gap-3 print:hidden">
-                <Link href="/grades" className="inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
-                  {t("grades.title")} →
-                </Link>
-                <Link
-                  href={`/materials/${material.slug}/certificate`}
-                  className="inline-block rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-navy-900 shadow hover:bg-amber-300"
-                >
-                  🏆 {locale === "ar" ? "استلم شهادتك" : "Get your certificate"}
-                </Link>
-              </div>
+                  <div className="mt-4 flex flex-wrap gap-3 print:hidden">
+                    <Link href="/grades" className="inline-block rounded-lg bg-white px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
+                      {t("grades.title")} <ForwardArrow />
+                    </Link>
+                    <Link
+                      href={`/materials/${material.slug}/certificate`}
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-amber-400 px-4 py-2 text-sm font-bold text-navy-900 shadow hover:bg-amber-300"
+                    >
+                      <Icon name="trophy" className="h-4 w-4" />
+                      {locale === "ar" ? "استلم شهادتك" : "Get your certificate"}
+                    </Link>
+                  </div>
                 </div>
               )}
             </>

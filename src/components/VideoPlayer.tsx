@@ -89,6 +89,7 @@ export function VideoPlayer({
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(false);
   const [progress, setProgress] = useState(18);
+  const [cssFullscreen, setCssFullscreen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const totalSeconds = Math.max(60, durationMinutes * 60);
@@ -108,6 +109,15 @@ export function VideoPlayer({
     return () => clearInterval(id);
   }, [playing]);
 
+  useEffect(() => {
+    if (!cssFullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setCssFullscreen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [cssFullscreen]);
+
   const fmtTime = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = sec % 60;
@@ -115,12 +125,32 @@ export function VideoPlayer({
   };
 
   const toggleFullscreen = () => {
-    const el = containerRef.current;
+    const el = containerRef.current as (HTMLDivElement & { webkitRequestFullscreen?: () => Promise<void> }) | null;
     if (!el) return;
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(() => {});
+    const doc = document as Document & { webkitFullscreenElement?: Element; webkitExitFullscreen?: () => Promise<void> };
+    if (document.fullscreenElement || doc.webkitFullscreenElement) {
+      if (document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        doc.webkitExitFullscreen?.();
+      }
+      setCssFullscreen(false);
+      return;
+    }
+    if (cssFullscreen) {
+      setCssFullscreen(false);
+      return;
+    }
+    if (el.requestFullscreen) {
+      el.requestFullscreen().catch(() => setCssFullscreen((v) => !v));
+    } else if (el.webkitRequestFullscreen) {
+      try {
+        el.webkitRequestFullscreen();
+      } catch {
+        setCssFullscreen((v) => !v);
+      }
     } else {
-      el.requestFullscreen?.().catch(() => {});
+      setCssFullscreen((v) => !v);
     }
   };
 
@@ -131,20 +161,22 @@ export function VideoPlayer({
           <button
             type="button"
             onClick={() => setMode("embed")}
-            className={`rounded-lg px-3 py-1 font-semibold transition ${
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 font-semibold transition ${
               mode === "embed" ? "bg-navy-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300"
             }`}
           >
-            🎬 Video Lecture
+            <Icon name="video" className="h-3.5 w-3.5" />
+            Video Lecture
           </button>
           <button
             type="button"
             onClick={() => setMode("studio")}
-            className={`rounded-lg px-3 py-1 font-semibold transition ${
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 font-semibold transition ${
               mode === "studio" ? "bg-navy-500 text-white" : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300"
             }`}
           >
-            🖥️ Interactive Studio Player
+            <Icon name="play" className="h-3.5 w-3.5" />
+            Interactive Studio Player
           </button>
         </div>
       )}
@@ -162,7 +194,9 @@ export function VideoPlayer({
       ) : (
         <div
           ref={containerRef}
-          className="relative aspect-video select-none overflow-hidden rounded-2xl bg-gradient-to-br from-[#19214a] via-[#2a3c82] to-[#4c5fb8] shadow-xl"
+          className={` select-none overflow-hidden bg-gradient-to-br from-[#19214a] via-[#2a3c82] to-[#4c5fb8] shadow-xl ${
+            cssFullscreen ? "fixed inset-0 z-[200]" : "relative aspect-video rounded-2xl"
+          }`}
         >
           {thumbnailUrl && (
             // eslint-disable-next-line @next/next/no-img-element
@@ -198,7 +232,14 @@ export function VideoPlayer({
                   const pct = Math.min(100, Math.max(0, ((e.clientX - rect.left) / rect.width) * 100));
                   setProgress(Math.round(pct));
                 }}
-                className="relative h-1.5 w-full cursor-pointer rounded-full bg-white/80"
+                onTouchMove={(e) => {
+                  const touch = e.touches[0];
+                  if (!touch) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pct = Math.min(100, Math.max(0, ((touch.clientX - rect.left) / rect.width) * 100));
+                  setProgress(Math.round(pct));
+                }}
+                className="relative h-2.5 w-full cursor-pointer rounded-full bg-white/80"
                 dir="ltr"
               >
                 <div className="h-full rounded-full bg-red-600" style={{ width: `${progress}%` }} />
@@ -216,7 +257,7 @@ export function VideoPlayer({
                   aria-label={muted ? "Unmute" : "Mute"}
                   className="text-white/85 hover:text-white"
                 >
-                  {muted ? "🔇" : "🔊"}
+                  <Icon name={muted ? "volume-mute" : "volume"} className="h-4.5 w-4.5" />
                 </button>
 
                 <div className="flex items-center gap-5">
@@ -226,7 +267,7 @@ export function VideoPlayer({
                     aria-label="Rewind"
                     className="text-white/85 hover:text-white"
                   >
-                    ⏮
+                    <Icon name="rewind" className="h-4.5 w-4.5" />
                   </button>
                   <button
                     type="button"
@@ -237,15 +278,15 @@ export function VideoPlayer({
                     aria-label="Stop"
                     className="text-white/85 hover:text-white"
                   >
-                    ⏹
+                    <Icon name="stop" className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
                     onClick={() => setPlaying((p) => !p)}
                     aria-label={playing ? "Pause" : "Play"}
-                    className="rounded-lg bg-white/15 px-3 py-1 font-bold text-white hover:bg-white/25"
+                    className="rounded-lg bg-white/15 px-3 py-1.5 font-bold text-white hover:bg-white/25"
                   >
-                    {playing ? "⏸" : "▶"}
+                    <Icon name={playing ? "pause" : "play"} className="h-4 w-4" />
                   </button>
                   <button
                     type="button"
@@ -253,7 +294,7 @@ export function VideoPlayer({
                     aria-label="Fast forward"
                     className="text-white/85 hover:text-white"
                   >
-                    ⏭
+                    <Icon name="fast-forward" className="h-4.5 w-4.5" />
                   </button>
                 </div>
 
@@ -263,7 +304,7 @@ export function VideoPlayer({
                   aria-label="Fullscreen"
                   className="text-white/85 hover:text-white"
                 >
-                  ⛶
+                  <Icon name="maximize" className="h-4.5 w-4.5" />
                 </button>
               </div>
             </div>

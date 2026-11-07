@@ -24,7 +24,10 @@ export default async function NewMaterialPage({ searchParams }: { searchParams: 
   if (edit) {
     const m = await db.query.materials.findFirst({ where: eq(materials.id, Number(edit)) });
     if (m) {
-      const first = await db.query.lessons.findFirst({ where: eq(lessons.materialId, m.id), orderBy: [asc(lessons.position)] });
+      const first = await db.query.lessons.findFirst({
+        where: eq(lessons.materialId, m.id),
+        orderBy: [asc(lessons.position)],
+      });
       initial = {
         id: m.id,
         title: m.title,
@@ -33,12 +36,18 @@ export default async function NewMaterialPage({ searchParams }: { searchParams: 
         kind: m.kind,
         priceCents: m.priceCents,
         published: m.published,
-        thumbnailUrl: m.thumbnailUrl,
+        thumbnailUrl: m.thumbnailUrl ?? "",
         subjectId: m.subjectId,
         fileSize: m.fileSize,
+        fileName: m.fileName,
+        fileUrl: m.fileUrl,
+        storagePath: m.storagePath,
+        mimeType: m.mimeType,
         videoUrl: first?.videoUrl ?? "",
         termId: m.termId,
         content: first?.content ?? "",
+        allowPendingStudents: Boolean(m.allowPendingStudents),
+        allowVisitors: Boolean(m.allowVisitors),
       };
     }
   }
@@ -50,7 +59,11 @@ export default async function NewMaterialPage({ searchParams }: { searchParams: 
         <h1 className="border-b border-slate-200 px-5 py-4 text-xl font-bold text-slate-900 sm:px-6 dark:border-slate-700 dark:text-white">
           {initial ? c.editMaterial : c.newMaterial}
         </h1>
-        <MaterialForm subjects={subjects.map((s) => ({ id: s.id, name: s.name, nameAr: s.nameAr, icon: s.icon }))} terms={terms.map((tm) => ({ id: tm.id, name: tm.name, nameAr: tm.nameAr, isActive: tm.isActive }))} initial={initial} />
+        <MaterialForm
+          subjects={subjects.map((s) => ({ id: s.id, name: s.name, nameAr: s.nameAr, icon: s.icon }))}
+          terms={terms.map((tm) => ({ id: tm.id, name: tm.name, nameAr: tm.nameAr, isActive: tm.isActive }))}
+          initial={initial}
+        />
       </Card>
     </>
   );

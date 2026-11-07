@@ -4,11 +4,33 @@ import { db } from "@/db";
 import { and, eq, sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { academicClasses, academicLevels, academicTerms, grades, lessons, materials, messages, purchases, quizQuestions, subjects, taskProgress, taskSubmissions, tasks, users } from "@/db/schema";
+import {
+  academicClasses,
+  academicLevels,
+  academicTerms,
+  accessSettings,
+  grades,
+  lessons,
+  materials,
+  messages,
+  purchases,
+  quizQuestions,
+  subjects,
+  taskProgress,
+  taskSubmissions,
+  tasks,
+  users,
+  type AccountStatus,
+  type StudentPageKey,
+  type VisitorPageKey,
+} from "@/db/schema";
+import { ALL_STUDENT_PAGES, ALL_VISITOR_PAGES, normalizeAccountStatus } from "./access";
 import { requireTeacher } from "./roles";
 import { generateQrToken, getCurrentUser, hashPassword, sessionPath } from "./session";
 import { getLocale } from "./i18n-server";
 import { GRADES, TASK_TYPES, tt } from "./i18n-teacher";
+import { deleteFromFilesBucket, FILES_BUCKET, guessMimeType, uploadBufferToFilesBucket } from "./storage";
+import { notifyAllStudents, notifyStudentsForAudience, notifyUsers } from "./notifications";
 
 export type TeacherActionState = {
   error?: string;
@@ -50,7 +72,42 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
   const due = new Date(`${dueRaw}T23:59:00`);
   if (!dueRaw || Number.isNaN(due.getTime())) return { error: c.dueRequired };
   if (fileData.length > 3_000_000) return { error: c.fileTooBig };
-  const target = audience === "all" || (GRADES as readonly string[]).includes(audience) ? audience : "all";
+
+  let targetGrade = "all";
+  let targetClassId: number | null = null;
+  let targetStudentId: number | null = null;
+  const fromProfile = str(fd, "fromProfile") === "1";
+
+  if (audience.startsWith("student:")) {
+    if (!fromProfile) return { error: c.assignTask };
+    const sid = Number(audience.slice("student:".length));
+    const st = sid ? await db.query.users.findFirst({ where: eq(users.id, sid) }) : null;
+    if (st && st.role === "student") {
+      targetStudentId = st.id;
+      targetGrade = st.grade;
+    }
+  } else if (audience.startsWith("class:")) {
+    const cid = Number(audience.slice("class:".length));
+    const cls = cid
+      ? await db.query.academicClasses.findFirst({
+          where: eq(academicClasses.id, cid),
+          with: { level: true },
+        })
+      : null;
+    if (cls) {
+      targetClassId = cls.id;
+      targetGrade = cls.level.name;
+    }
+  } else {
+    const knownLevels = await db.select().from(academicLevels);
+    const validGrades = new Set<string>([...GRADES, ...knownLevels.map((l) => l.name)]);
+    targetGrade = audience === "all" || validGrades.has(audience) ? audience : "all";
+  }
+
+  const allowPendingStudents =
+    fd.get("allowPendingStudents") === "on" || fd.get("allowPendingStudents") === "true";
+  const allowVisitors =
+    !targetStudentId && (fd.get("allowVisitors") === "on" || fd.get("allowVisitors") === "true");
 
   const [created] = await db
     .insert(tasks)
@@ -64,15 +121,36 @@ export async function assignTaskAction(_prev: TeacherActionState, fd: FormData):
       attachmentName: fileName && fileData ? fileName.slice(0, 120) : null,
       attachmentBody: fileName && fileData ? fileData : "",
       dueDate: due,
-      targetGrade: target,
+      targetGrade,
+      targetClassId,
+      targetStudentId,
+      allowPendingStudents,
+      allowVisitors,
       status: "open",
     })
     .returning();
+
+  await notifyStudentsForAudience(
+    { targetStudentId, targetClassId, targetGrade },
+    {
+      kind: taskType === "quiz" ? "quiz" : "task",
+      title: targetStudentId ? `Assigned to you: ${title}` : `New ${taskType}: ${title}`,
+      titleAr: targetStudentId ? `مهمة خاصة لك: ${title}` : `مهمة جديدة: ${title}`,
+      body: description || `Due ${due.toLocaleDateString("en-GB")}`,
+      bodyAr: description || `تاريخ التسليم ${due.toLocaleDateString("ar-EG")}`,
+      href: `/tasks/${created.id}`,
+    },
+  ).catch(() => {});
+
   revalidatePath("/tasks");
+  revalidatePath(`/tasks/${created.id}`);
   revalidatePath("/dashboard");
+  if (targetStudentId) revalidatePath(`/students/${targetStudentId}`);
   return {
     success: c.assignTask,
-    redirectTo: await sessionPath(`/tasks?task=${created.id}`),
+    redirectTo: await sessionPath(
+      targetStudentId ? `/tasks/${created.id}?student=${targetStudentId}` : `/tasks?task=${created.id}`,
+    ),
   };
 }
 
@@ -87,7 +165,215 @@ export async function toggleTaskStatusAction(fd: FormData) {
     .where(eq(tasks.id, id));
   revalidatePath("/tasks");
   revalidatePath(`/tasks/${id}`);
+  revalidatePath("/students");
+  if (task.targetStudentId) revalidatePath(`/students/${task.targetStudentId}`);
   revalidatePath("/dashboard");
+}
+
+export async function setTaskOpenStatusAction(taskId: number, nextStatus: "open" | "closed") {
+  await requireTeacher();
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!task) return { ok: false };
+  const status = nextStatus === "closed" ? "closed" : "open";
+  await db.update(tasks).set({ status }).where(eq(tasks.id, taskId));
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/students");
+  if (task.targetStudentId) revalidatePath(`/students/${task.targetStudentId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, status };
+}
+
+export async function setStudentTaskStatusAction(
+  taskId: number,
+  userId: number,
+  status: "todo" | "in_progress" | "done",
+) {
+  await requireTeacher();
+  const cleanStatus: "todo" | "in_progress" | "done" =
+    status === "done" || status === "in_progress" ? status : "todo";
+  const progress = cleanStatus === "done" ? 100 : cleanStatus === "in_progress" ? 50 : 0;
+  const now = new Date();
+
+  await db
+    .insert(taskProgress)
+    .values({ userId, taskId, status: cleanStatus, progress, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [taskProgress.userId, taskProgress.taskId],
+      set: { status: cleanStatus, progress, updatedAt: now },
+    });
+
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/students");
+  revalidatePath(`/students/${userId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, status: cleanStatus, progress };
+}
+
+export async function toggleSubmissionCheckedAction(taskId: number, userId: number, checked: boolean) {
+  await requireTeacher();
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!task) return { ok: false };
+  const now = new Date();
+
+  const sub = await db.query.taskSubmissions.findFirst({
+    where: and(eq(taskSubmissions.taskId, taskId), eq(taskSubmissions.userId, userId)),
+  });
+
+  if (sub) {
+    await db
+      .update(taskSubmissions)
+      .set({ checkedAt: checked ? now : null })
+      .where(eq(taskSubmissions.id, sub.id));
+  } else if (checked) {
+    await db.insert(taskSubmissions).values({
+      userId,
+      taskId,
+      fileName: `checked-task-${taskId}.txt`,
+      note: "Checked manually by instructor",
+      checkedAt: now,
+      submittedAt: now,
+    });
+  }
+
+  if (checked) {
+    await db
+      .insert(taskProgress)
+      .values({ userId, taskId, status: "done", progress: 100, updatedAt: now })
+      .onConflictDoUpdate({
+        target: [taskProgress.userId, taskProgress.taskId],
+        set: { status: "done", progress: 100, updatedAt: now },
+      });
+
+    await notifyUsers([userId], {
+      kind: "task",
+      title: `Task checked: ${task.title}`,
+      titleAr: `تمت مراجعة مهمتك: ${task.titleAr || task.title}`,
+      body: "Your instructor checked your work.",
+      bodyAr: "قام المعلم بمراجعة عملك وتأكيده.",
+      href: `/tasks/${taskId}`,
+    }).catch(() => {});
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/students");
+  revalidatePath(`/students/${userId}`);
+  revalidatePath("/dashboard");
+  return { ok: true, checked };
+}
+
+export async function reviewStudentTaskAction(input: {
+  taskId: number;
+  userId: number;
+  score: number | null;
+  teacherFeedback: string;
+  checked: boolean;
+  studentStatus: "todo" | "in_progress" | "done";
+}) {
+  await requireTeacher();
+  const task = await db.query.tasks.findFirst({ where: eq(tasks.id, input.taskId) });
+  if (!task) return { ok: false };
+  const now = new Date();
+
+  const hasScore = input.score !== null && input.score !== undefined && Number.isFinite(input.score);
+  const clampedScore = hasScore ? Math.min(task.maxScore, Math.max(0, Math.round(Number(input.score)))) : null;
+  const feedback = (input.teacherFeedback || "").trim().slice(0, 2000);
+  const finalStatus: "todo" | "in_progress" | "done" =
+    input.studentStatus === "done" || input.studentStatus === "in_progress" ? input.studentStatus : "todo";
+  const progress = finalStatus === "done" ? 100 : finalStatus === "in_progress" ? 50 : 0;
+
+  await db
+    .insert(taskProgress)
+    .values({ userId: input.userId, taskId: task.id, status: finalStatus, progress, updatedAt: now })
+    .onConflictDoUpdate({
+      target: [taskProgress.userId, taskProgress.taskId],
+      set: { status: finalStatus, progress, updatedAt: now },
+    });
+
+  const sub = await db.query.taskSubmissions.findFirst({
+    where: and(eq(taskSubmissions.taskId, task.id), eq(taskSubmissions.userId, input.userId)),
+  });
+
+  if (sub) {
+    await db
+      .update(taskSubmissions)
+      .set({
+        score: clampedScore !== null ? clampedScore : sub.score,
+        gradedAt: clampedScore !== null ? now : sub.gradedAt,
+        teacherFeedback: feedback,
+        checkedAt: input.checked ? sub.checkedAt ?? now : null,
+      })
+      .where(eq(taskSubmissions.id, sub.id));
+  } else if (clampedScore !== null || feedback || input.checked) {
+    await db.insert(taskSubmissions).values({
+      userId: input.userId,
+      taskId: task.id,
+      fileName: `manual-review-task-${task.id}.txt`,
+      note: "Reviewed manually by instructor",
+      score: clampedScore,
+      gradedAt: clampedScore !== null ? now : null,
+      teacherFeedback: feedback,
+      checkedAt: input.checked ? now : null,
+      submittedAt: now,
+    });
+  }
+
+  if (clampedScore !== null) {
+    const existing = await db.query.grades.findFirst({
+      where: and(eq(grades.userId, input.userId), eq(grades.taskId, task.id)),
+    });
+    if (existing) {
+      await db
+        .update(grades)
+        .set({ score: clampedScore, maxScore: task.maxScore, gradedAt: now })
+        .where(eq(grades.id, existing.id));
+    } else {
+      await db.insert(grades).values({
+        userId: input.userId,
+        subjectId: task.subjectId,
+        taskId: task.id,
+        title: task.title,
+        titleAr: task.titleAr,
+        kind: task.taskType === "quiz" ? "quiz" : "assignment",
+        score: clampedScore,
+        maxScore: task.maxScore,
+        gradedAt: now,
+      });
+    }
+  }
+
+  if (clampedScore !== null || feedback || input.checked) {
+    await notifyUsers([input.userId], {
+      kind: clampedScore !== null ? "grade" : "task",
+      title:
+        clampedScore !== null
+          ? `Task corrected & graded: ${task.title}`
+          : `Task checked by teacher: ${task.title}`,
+      titleAr:
+        clampedScore !== null
+          ? `تم تصحيح وتقييم مهمتك: ${task.titleAr || task.title}`
+          : `تمت مراجعة مهمتك: ${task.titleAr || task.title}`,
+      body:
+        clampedScore !== null
+          ? `Score: ${clampedScore}/${task.maxScore}${feedback ? ` — "${feedback.slice(0, 120)}"` : ""}`
+          : feedback || "Your instructor reviewed your task.",
+      bodyAr:
+        clampedScore !== null
+          ? `الدرجة: ${clampedScore}/${task.maxScore}${feedback ? ` — "${feedback.slice(0, 120)}"` : ""}`
+          : feedback || "قام المعلم بمراجعة مهمتك.",
+      href: `/tasks/${task.id}`,
+    }).catch(() => {});
+  }
+
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${task.id}`);
+  revalidatePath("/students");
+  revalidatePath(`/students/${input.userId}`);
+  revalidatePath("/grades");
+  revalidatePath("/dashboard");
+  return { ok: true, score: clampedScore, checked: input.checked, status: finalStatus };
 }
 
 export async function gradeSubmissionAction(taskId: number, userId: number, score: number) {
@@ -138,6 +424,16 @@ export async function gradeSubmissionAction(taskId: number, userId: number, scor
       gradedAt: now,
     });
   }
+
+  await notifyUsers([userId], {
+    kind: "grade",
+    title: `Task graded: ${task.title}`,
+    titleAr: `تم تقييم مهمتك: ${task.titleAr || task.title}`,
+    body: `You scored ${s} out of ${task.maxScore}.`,
+    bodyAr: `حصلت على ${s} من ${task.maxScore}.`,
+    href: `/tasks/${taskId}`,
+  }).catch(() => {});
+
   revalidatePath("/tasks");
   revalidatePath("/students");
   revalidatePath(`/students/${userId}`);
@@ -199,19 +495,34 @@ export async function createStudentAction(_prev: TeacherActionState, fd: FormDat
       resolvedGrade = cls.level.name;
     }
   }
-  await db.insert(users).values({
-    fullName,
-    email,
-    phone,
-    parentName,
-    parentPhone,
-    dateOfBirth: dateOfBirth && !Number.isNaN(dateOfBirth.getTime()) ? dateOfBirth : null,
-    studentCode: code,
-    passwordHash: hashPassword(password),
-    qrToken: generateQrToken(),
-    grade: resolvedGrade,
-    classId,
-  });
+  const [createdStudent] = await db
+    .insert(users)
+    .values({
+      fullName,
+      email,
+      phone,
+      parentName,
+      parentPhone,
+      dateOfBirth: dateOfBirth && !Number.isNaN(dateOfBirth.getTime()) ? dateOfBirth : null,
+      studentCode: code,
+      passwordHash: hashPassword(password),
+      qrToken: generateQrToken(),
+      grade: resolvedGrade,
+      classId,
+      accountStatus: "approved",
+      approvedAt: new Date(),
+    })
+    .returning();
+
+  await notifyUsers([createdStudent.id], {
+    kind: "system",
+    title: `Welcome to in science, ${fullName.split(" ")[0]}!`,
+    titleAr: `مرحباً بك في منصة العلوم يا ${fullName.split(" ")[0]}!`,
+    body: "Explore your study materials, complete interactive lessons, and track your grades.",
+    bodyAr: "استكشف موادك الدراسية، تابع الدروس التفاعلية، وراقب تقدمك أولاً بأول.",
+    href: "/materials",
+  }).catch(() => {});
+
   revalidatePath("/students");
   revalidatePath("/dashboard");
   return { success: c.studentCreated, studentCode: code, temporaryPassword: password };
@@ -226,26 +537,66 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
   const title = str(fd, "title");
   const titleAr = str(fd, "titleAr") || title;
   const description = str(fd, "description");
-  const kind = str(fd, "kind") === "pdf" ? "pdf" : "video";
+  const rawKind = str(fd, "kind");
+  const kind = rawKind === "pdf" ? "pdf" : rawKind === "doc" ? "doc" : "video";
   const priceCents = Math.max(0, Math.round((Number(fd.get("price")) || 0) * 100));
   const published = str(fd, "status") !== "draft";
   const thumbnailUrl = str(fd, "thumbnailUrl") || null;
   const videoUrl = str(fd, "videoUrl") || null;
   const content = str(fd, "content") || `## ${title}\n\n${description || "Study the key concepts and complete the knowledge check quiz."}`;
-  const fileSize = str(fd, "fileSize") || (kind === "pdf" ? "4.8 MB" : "120 MB");
+
+  let storagePath = str(fd, "storagePath") || null;
+  let fileName = str(fd, "fileName") || null;
+  let mimeType = str(fd, "mimeType") || null;
+  let fileUrl = str(fd, "fileUrl") || null; // Google Drive link or external document URL
+  let fileSize = str(fd, "fileSize") || (kind === "video" ? "120 MB" : "");
+
+  // Fallback direct server upload if a File was submitted in FormData
+  const rawFile = fd.get("file");
+  if (rawFile instanceof File && rawFile.size > 0 && !storagePath) {
+    const uploaded = await uploadBufferToFilesBucket(
+      "materials",
+      rawFile.name,
+      Buffer.from(await rawFile.arrayBuffer()),
+      rawFile.type,
+    );
+    if (uploaded) {
+      storagePath = uploaded.storagePath;
+      fileName = rawFile.name;
+      mimeType = uploaded.mimeType;
+    }
+  }
+  if (fileName && !mimeType) {
+    mimeType = guessMimeType(fileName, null);
+  }
+
   const subjectId = Number(fd.get("subjectId")) || 1;
   const termIdRaw = Number(fd.get("termId")) || null;
   const termId = termIdRaw && (await db.query.academicTerms.findFirst({ where: eq(academicTerms.id, termIdRaw) })) ? termIdRaw : null;
 
   if (title.length < 3) return { error: c.titleShort };
   if (thumbnailUrl && !/^https?:\/\/|^\//i.test(thumbnailUrl)) return { error: "Cover image must be a valid URL." };
+  if (fileUrl && !/^https?:\/\//i.test(fileUrl)) return { error: "Document link must start with https://" };
+
+  const hasAccessFlags = fd.get("hasAccessFlags") === "1";
+  const allowPendingStudents =
+    fd.get("allowPendingStudents") === "on" || fd.get("allowPendingStudents") === "true";
+  const allowVisitors =
+    priceCents === 0 && (fd.get("allowVisitors") === "on" || fd.get("allowVisitors") === "true");
 
   let materialId = id;
+  let finalSlug = "";
   let lessonId: number | null = null;
+  let newlyPublished = false;
 
   if (id) {
     const existing = await db.query.materials.findFirst({ where: eq(materials.id, id) });
     if (!existing) return { error: "Material not found." };
+    finalSlug = existing.slug;
+    newlyPublished = !existing.published && published;
+    if (storagePath && existing.storagePath && existing.storagePath !== storagePath) {
+      await deleteFromFilesBucket(existing.storagePath);
+    }
     await db
       .update(materials)
       .set({
@@ -260,6 +611,17 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
         subjectId,
         termId,
         fileSize: fileSize || existing.fileSize,
+        fileUrl: fileUrl !== null ? fileUrl : existing.fileUrl,
+        fileName: fileName || existing.fileName,
+        storageBucket: FILES_BUCKET,
+        storagePath: storagePath || existing.storagePath,
+        mimeType: mimeType || existing.mimeType,
+        ...(hasAccessFlags
+          ? {
+              allowPendingStudents,
+              allowVisitors: priceCents === 0 ? allowVisitors : false,
+            }
+          : {}),
         updatedAt: new Date(),
       })
       .where(eq(materials.id, id));
@@ -280,9 +642,32 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
   } else {
     let slug = slugify(title);
     if (await db.query.materials.findFirst({ where: eq(materials.slug, slug) })) slug = `${slug}-${Date.now().toString(36)}`;
+    finalSlug = slug;
+    newlyPublished = published;
     const [row] = await db
       .insert(materials)
-      .values({ slug, title, titleAr, description, descriptionAr: description, kind, priceCents, published, thumbnailUrl, subjectId, termId, fileSize, isNew: true })
+      .values({
+        slug,
+        title,
+        titleAr,
+        description,
+        descriptionAr: description,
+        kind,
+        priceCents,
+        published,
+        thumbnailUrl,
+        subjectId,
+        termId,
+        fileSize,
+        fileUrl,
+        fileName,
+        storageBucket: FILES_BUCKET,
+        storagePath,
+        mimeType,
+        allowPendingStudents: hasAccessFlags ? allowPendingStudents : priceCents === 0,
+        allowVisitors: hasAccessFlags ? allowVisitors : priceCents === 0,
+        isNew: true,
+      })
       .returning();
     materialId = row.id;
     const [insertedLesson] = await db
@@ -292,7 +677,6 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
     lessonId = insertedLesson.id;
   }
 
-  // Ensure the lesson has at least one quiz question so the student's Video -> Quiz journey is complete
   if (lessonId) {
     const qText = str(fd, "quizQuestion");
     const opt0 = str(fd, "quizOpt0");
@@ -342,6 +726,17 @@ export async function saveMaterialAction(_prev: TeacherActionState, fd: FormData
     }
   }
 
+  if (newlyPublished && finalSlug) {
+    await notifyAllStudents({
+      kind: "material",
+      title: `New study material: ${title}`,
+      titleAr: `مادة دراسية جديدة: ${titleAr || title}`,
+      body: description || "Open the library to explore this new lesson and files.",
+      bodyAr: description || "افتح المكتبة لاستكشاف هذا الدرس الجديد والملفات المرفقة.",
+      href: `/materials/${finalSlug}`,
+    }).catch(() => {});
+  }
+
   revalidatePath("/materials");
   revalidatePath("/dashboard");
   return {
@@ -354,17 +749,34 @@ export async function toggleMaterialPublishAction(materialId: number) {
   await requireTeacher();
   const existing = await db.query.materials.findFirst({ where: eq(materials.id, materialId) });
   if (!existing) return { ok: false };
+  const nextPublished = !existing.published;
   await db
     .update(materials)
-    .set({ published: !existing.published, updatedAt: new Date() })
+    .set({ published: nextPublished, updatedAt: new Date() })
     .where(eq(materials.id, materialId));
+
+  if (nextPublished) {
+    await notifyAllStudents({
+      kind: "material",
+      title: `Published: ${existing.title}`,
+      titleAr: `تم نشر مادة: ${existing.titleAr || existing.title}`,
+      body: existing.description || "Now available in your study materials.",
+      bodyAr: existing.descriptionAr || "متاحة الآن في مكتبة المواد الدراسية.",
+      href: `/materials/${existing.slug}`,
+    }).catch(() => {});
+  }
+
   revalidatePath("/materials");
   revalidatePath("/dashboard");
-  return { ok: true, published: !existing.published };
+  return { ok: true, published: nextPublished };
 }
 
 export async function deleteMaterialAction(materialId: number) {
   await requireTeacher();
+  const existing = await db.query.materials.findFirst({ where: eq(materials.id, materialId) });
+  if (existing?.storagePath) {
+    await deleteFromFilesBucket(existing.storagePath);
+  }
   await db.delete(materials).where(eq(materials.id, materialId));
   revalidatePath("/materials");
   revalidatePath("/dashboard");
@@ -407,6 +819,16 @@ export async function sendMessageAction(_prev: TeacherActionState, fd: FormData)
     attachmentName: attachmentName && attachmentData ? attachmentName.slice(0, 120) : null,
     attachmentData: attachmentName && attachmentData ? attachmentData : null,
   });
+
+  await notifyUsers([studentId], {
+    kind: "message",
+    title: `New message from ${teacher.fullName}`,
+    titleAr: `رسالة جديدة من ${teacher.fullName}`,
+    body: body.slice(0, 160),
+    bodyAr: body.slice(0, 160),
+    href: "/messages",
+  }).catch(() => {});
+
   revalidatePath(`/students/${studentId}/message`);
   revalidatePath("/messages");
   return { success: c.messageSent };
@@ -500,7 +922,9 @@ export async function createSubjectAction(fd: FormData) {
   await requireTeacher();
   const name = str(fd, "name");
   const nameAr = str(fd, "nameAr") || name;
-  const icon = str(fd, "icon") || "📚";
+  const rawIcon = str(fd, "icon").toLowerCase();
+  const validIcons = new Set(["chemistry", "physics", "biology", "mathematics", "science", "book"]);
+  const icon = validIcons.has(rawIcon) ? rawIcon : "science";
   const color = str(fd, "color") || "indigo";
   if (name.length < 2) return;
   await db.insert(subjects).values({ name, nameAr, icon, color });
@@ -518,3 +942,237 @@ export async function deleteSubjectAction(subjectId: number) {
   revalidatePath("/settings");
   return { ok: true };
 }
+
+/* ---------- Student Signup Approval, Moderation & Access Control ---------- */
+
+export async function setStudentAccountStatusAction(input: {
+  studentId: number;
+  status: AccountStatus;
+  note?: string;
+  classId?: number | null;
+}) {
+  await requireTeacher();
+  const student = await db.query.users.findFirst({ where: eq(users.id, input.studentId) });
+  if (!student || student.role !== "student") {
+    return { ok: false, error: "Student not found." };
+  }
+
+  const nextStatus = normalizeAccountStatus(input.status);
+  const note = (input.note ?? "").trim().slice(0, 500);
+  const patch: Partial<typeof users.$inferInsert> = {
+    accountStatus: nextStatus,
+    statusNote: note,
+    approvedAt: nextStatus === "approved" ? new Date() : student.approvedAt,
+  };
+
+  if (input.classId !== undefined) {
+    if (input.classId === null) {
+      patch.classId = null;
+    } else {
+      const cls = await db.query.academicClasses.findFirst({
+        where: eq(academicClasses.id, input.classId),
+        with: { level: true },
+      });
+      if (cls) {
+        patch.classId = cls.id;
+        patch.grade = cls.level.name;
+      }
+    }
+  }
+
+  // If blocking an account, bump sessionVersion so any active browser cookie is invalidated on next check
+  if (nextStatus === "blocked") {
+    patch.sessionVersion = (student.sessionVersion ?? 0) + 1;
+  }
+
+  await db.update(users).set(patch).where(eq(users.id, student.id));
+
+  if (nextStatus === "approved") {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account approved — full access unlocked!",
+      titleAr: "تمت الموافقة على حسابك — تم فتح جميع الصلاحيات!",
+      body:
+        note ||
+        "Your teacher approved your registration. You now have full access to all tasks, materials, quizzes, messages, and grades.",
+      bodyAr:
+        note ||
+        "وافق معلمك على تسجيلك. يمكنك الآن الوصول الكامل لجميع المهام والمواد والاختبارات والرسائل والدرجات.",
+      href: "/dashboard",
+    }).catch(() => {});
+  } else if (nextStatus === "suspended") {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account temporarily suspended",
+      titleAr: "تم إيقاف حسابك مؤقتاً",
+      body:
+        note ||
+        "Your teacher has temporarily suspended submissions and purchases on your account. Check your messages or contact your teacher for details.",
+      bodyAr:
+        note ||
+        "قام معلمك بإيقاف التسليمات والمشتريات مؤقتاً على حسابك. يرجى مراجعة الرسائل أو التواصل مع معلمك.",
+      href: "/messages",
+    }).catch(() => {});
+  } else if (nextStatus === "blocked") {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account blocked",
+      titleAr: "تم حظر الحساب",
+      body: note || "Your account access has been blocked by your teacher.",
+      bodyAr: note || "تم حظر الوصول إلى حسابك من قِبل المعلم.",
+      href: "/dashboard",
+    }).catch(() => {});
+  } else {
+    await notifyUsers([student.id], {
+      kind: "system",
+      title: "Account awaiting teacher review",
+      titleAr: "حسابك بانتظار مراجعة المعلم",
+      body: note || "Your account is currently in limited preview mode while awaiting teacher approval.",
+      bodyAr: note || "حسابك حالياً في وضع الوصول المحدود بانتظار موافقة المعلم.",
+      href: "/dashboard",
+    }).catch(() => {});
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/students");
+  revalidatePath(`/students/${student.id}`);
+  revalidatePath("/notifications");
+  return { ok: true, status: nextStatus };
+}
+
+export async function quickSendStudentMessageAction(studentId: number, bodyText: string) {
+  const teacher = await requireTeacher();
+  const body = bodyText.trim().slice(0, 2000);
+  if (body.length < 1) {
+    return { ok: false, error: "Message cannot be empty." };
+  }
+  const student = await db.query.users.findFirst({ where: eq(users.id, studentId) });
+  if (!student || student.role !== "student") {
+    return { ok: false, error: "Student not found." };
+  }
+
+  await db.insert(messages).values({
+    studentId: student.id,
+    senderId: teacher.id,
+    recipientType: "student",
+    body,
+  });
+
+  await notifyUsers([student.id], {
+    kind: "message",
+    title: `Message from ${teacher.fullName}`,
+    titleAr: `رسالة من ${teacher.fullName}`,
+    body: body.slice(0, 140),
+    bodyAr: body.slice(0, 140),
+    href: "/messages",
+  }).catch(() => {});
+
+  revalidatePath("/messages");
+  revalidatePath("/students");
+  revalidatePath(`/students/${student.id}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function saveAccessPolicyAction(input: {
+  pendingPages: string[];
+  visitorPages: string[];
+  pendingCanSubmitTasks: boolean;
+  pendingCanPurchase: boolean;
+}) {
+  await requireTeacher();
+  const allowedStudentSet = new Set<string>(ALL_STUDENT_PAGES);
+  const allowedVisitorSet = new Set<string>(ALL_VISITOR_PAGES);
+
+  const pendingPages = Array.from(
+    new Set(
+      input.pendingPages.filter((p): p is StudentPageKey => allowedStudentSet.has(p)),
+    ),
+  );
+  if (!pendingPages.includes("profile")) pendingPages.push("profile");
+
+  const visitorPages = Array.from(
+    new Set(
+      input.visitorPages.filter((p): p is VisitorPageKey => allowedVisitorSet.has(p)),
+    ),
+  );
+
+  await db
+    .insert(accessSettings)
+    .values({
+      id: 1,
+      pendingPages,
+      visitorPages,
+      pendingCanSubmitTasks: Boolean(input.pendingCanSubmitTasks),
+      pendingCanPurchase: Boolean(input.pendingCanPurchase),
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: accessSettings.id,
+      set: {
+        pendingPages,
+        visitorPages,
+        pendingCanSubmitTasks: Boolean(input.pendingCanSubmitTasks),
+        pendingCanPurchase: Boolean(input.pendingCanPurchase),
+        updatedAt: new Date(),
+      },
+    });
+
+  revalidatePath("/settings");
+  revalidatePath("/");
+  revalidatePath("/login");
+  revalidatePath("/register");
+  revalidatePath("/dashboard");
+  revalidatePath("/materials");
+  revalidatePath("/tasks");
+  revalidatePath("/grades");
+  revalidatePath("/messages");
+  revalidatePath("/notifications");
+  revalidatePath("/profile");
+  return { ok: true, pendingPages, visitorPages };
+}
+
+export async function setMaterialGuestAccessAction(
+  materialId: number,
+  target: "pending" | "visitors",
+  allowed: boolean,
+) {
+  await requireTeacher();
+  const existing = await db.query.materials.findFirst({ where: eq(materials.id, materialId) });
+  if (!existing) return { ok: false };
+
+  const patch =
+    target === "pending"
+      ? { allowPendingStudents: Boolean(allowed), updatedAt: new Date() }
+      : { allowVisitors: existing.priceCents === 0 ? Boolean(allowed) : false, updatedAt: new Date() };
+
+  await db.update(materials).set(patch).where(eq(materials.id, materialId));
+  revalidatePath("/settings");
+  revalidatePath("/materials");
+  revalidatePath(`/materials/${existing.slug}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+
+export async function setTaskGuestAccessAction(
+  taskId: number,
+  target: "pending" | "visitors",
+  allowed: boolean,
+) {
+  await requireTeacher();
+  const existing = await db.query.tasks.findFirst({ where: eq(tasks.id, taskId) });
+  if (!existing) return { ok: false };
+
+  const patch =
+    target === "pending"
+      ? { allowPendingStudents: Boolean(allowed) }
+      : { allowVisitors: existing.targetStudentId ? false : Boolean(allowed) };
+
+  await db.update(tasks).set(patch).where(eq(tasks.id, taskId));
+  revalidatePath("/settings");
+  revalidatePath("/tasks");
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/dashboard");
+  return { ok: true };
+}
+

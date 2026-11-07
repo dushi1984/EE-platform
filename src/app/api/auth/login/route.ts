@@ -3,6 +3,7 @@ import { or, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import { DEMO_PASSWORD, DEMO_STUDENT_CODE, ensureSeeded } from "@/db/seed";
+import { firstAllowedPath, getAccessPolicy, normalizeAccountStatus } from "@/lib/access";
 import {
   createSessionToken,
   hashPassword,
@@ -59,7 +60,7 @@ export async function POST(request: NextRequest) {
 
   // Find user by code, email, or phone
   const cleanPhone = identifier.replace(/[\s\-()]/g, "");
-  let user = demo
+  const user = demo
     ? await db.query.users.findFirst({ where: eq(users.studentCode, DEMO_STUDENT_CODE) })
     : identifier
       ? await db.query.users.findFirst({
@@ -95,10 +96,25 @@ export async function POST(request: NextRequest) {
     return new NextResponse(null, { status: 303, headers: { Location: `/login?${params.toString()}` } });
   }
 
+  if (authenticated.role === "student" && normalizeAccountStatus(authenticated.accountStatus) === "blocked") {
+    if (wantsJson) {
+      return NextResponse.json({ ok: false, error: "blocked" }, { status: 403 });
+    }
+    const params = new URLSearchParams({ error: "blocked" });
+    if (identifier) params.set("identifier", identifier);
+    return new NextResponse(null, { status: 303, headers: { Location: `/login?${params.toString()}` } });
+  }
+
   await db.update(users).set({ lastLoginAt: new Date() }).where(eq(users.id, authenticated.id));
   const token = createSessionToken(authenticated.id, authenticated.sessionVersion);
-  const destination = `${next}${next.includes("?") ? "&" : "?"}session=${encodeURIComponent(token)}`;
-  // "Remember me" unchecked → session-only cookies that vanish when the browser closes
+
+  let resolvedNext = next;
+  if (authenticated.role === "student" && resolvedNext === "/dashboard") {
+    const policy = await getAccessPolicy();
+    resolvedNext = firstAllowedPath(authenticated, policy);
+  }
+
+  const destination = `${resolvedNext}${resolvedNext.includes("?") ? "&" : "?"}session=${encodeURIComponent(token)}`;
   const mainOpts = remember ? sessionCookieOptions : { httpOnly: true as const, path: "/", sameSite: "lax" as const };
   const frameOpts = remember
     ? iframeCookieOptions
